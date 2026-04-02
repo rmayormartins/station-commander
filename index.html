@@ -1,10 +1,34 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ORBITAL COMMAND — ISS & Tiangong Real-Time Tracker</title>
+<meta name="description" content="Real-time tactical tracker for the International Space Station (ISS) and China's Tiangong space station. Live position, crew, comms, module diagrams.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#00ff4122 transparent}
+  *::-webkit-scrollbar{width:3px}*::-webkit-scrollbar-thumb{background:#00ff4122}
+  body{background:#070a07;font-family:'JetBrains Mono',monospace;overflow-x:hidden}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
+  @keyframes pulse{0%,100%{opacity:.6}50%{opacity:1}}
+  #root{min-height:100vh}
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
 
 /* ═══════════════════════════════════════════════════════════
-   ORBITAL COMMAND v3.0 — ISS & TIANGONG TACTICAL TRACKER
+   ORBITAL COMMAND v3.1 — ISS & TIANGONG TACTICAL TRACKER
+   Standalone HTML for GitHub Pages
    ═══════════════════════════════════════════════════════════ */
 
-// ─── LAND MASK (improved bounding regions) ───
 const LAND = [
   {latMin:25,latMax:50,lonMin:-130,lonMax:-65},{latMin:50,latMax:72,lonMin:-170,lonMax:-55},
   {latMin:15,latMax:30,lonMin:-118,lonMax:-85},{latMin:8,latMax:22,lonMin:-90,lonMax:-60},
@@ -24,7 +48,6 @@ const LAND = [
 ];
 const isLand = (lat,lon) => LAND.some(r => lat>=r.latMin && lat<=r.latMax && lon>=r.lonMin && lon<=r.lonMax);
 
-// ─── STATION CONFIGS ───
 const STATIONS = {
   iss: {
     id:"iss",name:"ISS",fullName:"International Space Station",noradId:25544,
@@ -52,27 +75,27 @@ const STATIONS = {
       {port:"Zvezda Aft",status:"Progress MS-31",color:"#ffb000"},
     ],
     crew:[
-      {name:"Sergey Kud-Sverchkov",role:"ISS Commander",agency:"Roscosmos",flag:"🇷🇺",mission:"Soyuz MS-27"},
-      {name:"Sergei Mikayev",role:"Flight Engineer",agency:"Roscosmos",flag:"🇷🇺",mission:"Soyuz MS-27"},
-      {name:"Christopher Williams",role:"Flight Engineer",agency:"NASA",flag:"🇺🇸",mission:"Crew-11 ext."},
-      {name:"Jessica Meir",role:"Crew-12 Commander",agency:"NASA",flag:"🇺🇸",mission:"Crew-12"},
-      {name:"Jack Hathaway",role:"Crew-12 Pilot",agency:"NASA",flag:"🇺🇸",mission:"Crew-12"},
-      {name:"Sophie Adenot",role:"Mission Specialist",agency:"ESA",flag:"🇫🇷",mission:"Crew-12"},
-      {name:"Andrey Fedyaev",role:"Mission Specialist",agency:"Roscosmos",flag:"🇷🇺",mission:"Crew-12"},
+      {name:"Sergey Kud-Sverchkov",role:"ISS Commander",agency:"Roscosmos",flag:"\u{1F1F7}\u{1F1FA}",mission:"Soyuz MS-27"},
+      {name:"Sergei Mikayev",role:"Flight Engineer",agency:"Roscosmos",flag:"\u{1F1F7}\u{1F1FA}",mission:"Soyuz MS-27"},
+      {name:"Christopher Williams",role:"Flight Engineer",agency:"NASA",flag:"\u{1F1FA}\u{1F1F8}",mission:"Crew-11 ext."},
+      {name:"Jessica Meir",role:"Crew-12 Commander",agency:"NASA",flag:"\u{1F1FA}\u{1F1F8}",mission:"Crew-12"},
+      {name:"Jack Hathaway",role:"Crew-12 Pilot",agency:"NASA",flag:"\u{1F1FA}\u{1F1F8}",mission:"Crew-12"},
+      {name:"Sophie Adenot",role:"Mission Specialist",agency:"ESA",flag:"\u{1F1EB}\u{1F1F7}",mission:"Crew-12"},
+      {name:"Andrey Fedyaev",role:"Mission Specialist",agency:"Roscosmos",flag:"\u{1F1F7}\u{1F1FA}",mission:"Crew-12"},
     ],
-    ops:[["Expedition","74 (since Sep 2025)"],["Ground Control","MCC-H Houston · TsUP Moscow · Col-CC Munich · SSIPC Tsukuba"],["Reboost","Progress MS thrusters ~monthly"],["EVA Suits","US EMU · Orlan-MKS"],["O₂ Generation","OGS electrolysis + Elektron"],["CO₂ Removal","CDRA (US) + Vozdukh (RU)"],["Water Recovery","WRS — 93% recycle rate"],["Canadarm2","17.6m, 7-DOF robotic arm"],["Crew Exercise","ARED, T2 treadmill, CEVIS"]],
+    ops:[["Expedition","74 (since Sep 2025)"],["Ground Control","MCC-H Houston \u00b7 TsUP Moscow \u00b7 Col-CC Munich \u00b7 SSIPC Tsukuba"],["Reboost","Progress MS thrusters ~monthly"],["EVA Suits","US EMU \u00b7 Orlan-MKS"],["O\u2082 Generation","OGS electrolysis + Elektron"],["CO\u2082 Removal","CDRA (US) + Vozdukh (RU)"],["Water Recovery","WRS \u2014 93% recycle rate"],["Canadarm2","17.6m, 7-DOF robotic arm"],["Crew Exercise","ARED, T2 treadmill, CEVIS"]],
   },
   tiangong: {
-    id:"tiangong",name:"TIANGONG",fullName:"天宫空间站 Tiangong",noradId:48274,
+    id:"tiangong",name:"TIANGONG",fullName:"\u5929\u5BAB\u7A7A\u95F4\u7AD9 Tiangong",noradId:48274,
     launched:"2021-04-29T03:23:00Z",launchLabel:"Apr 29, 2021",
     mass:"~100,000 kg",orbitAlt:"~390 km",speedKmh:"~27,650 km/h",
     period:"91.4 min",inclination:"41.47°",apogee:"395 km",perigee:"385 km",
-    modules:3,length:"~55 m",width:"~30 m (arrays)",pressVol:"340 m³",
+    modules:3,length:"~55 m",width:"~30 m (arrays)",pressVol:"340 m\u00b3",
     power:"~100 kW (flexible arrays)",
-    agencies:"CMSA — China Manned Space Agency",
+    agencies:"CMSA \u2014 China Manned Space Agency",
     c:"#ff6b35",cd:"#ff6b3533",
     comms:[
-      {band:"S-Band",freq:"2.0–2.3 GHz",use:"TT&C, voice uplink/downlink"},
+      {band:"S-Band",freq:"2.0\u20132.3 GHz",use:"TT&C, voice uplink/downlink"},
       {band:"Ka-Band",freq:"~26 GHz",use:"High-rate science (1.2 Gbps)"},
       {band:"Tianlian Relay",freq:"Multi-band",use:"TDRS-equivalent relay sats"},
       {band:"UHF",freq:"~400 MHz",use:"EVA communications"},
@@ -85,40 +108,39 @@ const STATIONS = {
       {port:"Wentian Fwd",status:"Available",color:"#555"},
     ],
     crew:[
-      {name:"Zhang Lu 张陆",role:"Commander (2nd flight)",agency:"CMSA",flag:"🇨🇳",mission:"Shenzhou 21"},
-      {name:"Wu Fei 吴飞",role:"Spaceflight Engineer",agency:"CAST",flag:"🇨🇳",mission:"Shenzhou 21"},
-      {name:"Zhang Hongzhang 张鸿章",role:"Payload Specialist",agency:"CAS",flag:"🇨🇳",mission:"Shenzhou 21"},
+      {name:"Zhang Lu \u5F20\u9646",role:"Commander (2nd flight)",agency:"CMSA",flag:"\u{1F1E8}\u{1F1F3}",mission:"Shenzhou 21"},
+      {name:"Wu Fei \u5434\u98DE",role:"Spaceflight Engineer",agency:"CAST",flag:"\u{1F1E8}\u{1F1F3}",mission:"Shenzhou 21"},
+      {name:"Zhang Hongzhang \u5F20\u9E3F\u7AE0",role:"Payload Specialist",agency:"CAS",flag:"\u{1F1E8}\u{1F1F3}",mission:"Shenzhou 21"},
     ],
-    ops:[["Mission","Shenzhou 21 (since Nov 2025)"],["Ground Control","Beijing BACC"],["EVA Suits","Feitian Gen-2 (new 2025)"],["Relay Sats","Tianlian-1/2 constellation"],["Active Research","27 experiments in-progress"],["Animal Study","4 mice — first for China"],["Reboost","Tianzhou cargo thrusters"],["Life Support","Regenerative ECLSS"],["Robotic Arm","10m 7-DOF (Wentian)"]],
+    ops:[["Mission","Shenzhou 21 (since Nov 2025)"],["Ground Control","Beijing BACC"],["EVA Suits","Feitian Gen-2 (new 2025)"],["Relay Sats","Tianlian-1/2 constellation"],["Active Research","27 experiments in-progress"],["Animal Study","4 mice \u2014 first for China"],["Reboost","Tianzhou cargo thrusters"],["Life Support","Regenerative ECLSS"],["Robotic Arm","10m 7-DOF (Wentian)"]],
   },
 };
 
 const NEWS = [
-  {t:"2026-04-01 18:24",s:"NASA",h:"Artemis II launches from KSC Pad 39B — first crewed lunar mission since Apollo 17 in 1972"},
+  {t:"2026-04-01 18:24",s:"NASA",h:"Artemis II launches from KSC Pad 39B \u2014 first crewed lunar mission since Apollo 17 in 1972"},
   {t:"2026-04-01 11:41",s:"NASA Blog",h:"Expedition 74 crew trains Canadarm2 robotics for Cygnus XL cargo capture operation"},
   {t:"2026-04-01",s:"SpaceX",h:"Cygnus XL cargo spacecraft targeted for launch Apr 8 to resupply ISS with quantum computing gear"},
   {t:"2026-03-22",s:"Roscosmos",h:"Progress 94 (MS-33) successfully launches from Baikonur Cosmodrome to ISS"},
   {t:"2026-03-10",s:"NASASpaceFlight",h:"ISS Feb roundup: Crew-12 arrival, Crew-11 early return after medical event, CRS-33 departure"},
-  {t:"2026-02-14",s:"SpaceX",h:"Crew-12 Dragon Freedom docks with ISS at Harmony zenith port on Valentine's Day"},
+  {t:"2026-02-14",s:"SpaceX",h:"Crew-12 Dragon Freedom docks with ISS at Harmony port on Valentine's Day"},
   {t:"2026-02-13",s:"NASA",h:"Crew-12 launches: Meir, Hathaway, Adenot & Fedyaev head to ISS from SLC-40"},
   {t:"2025-11-25",s:"CMSA",h:"Shenzhou 22 launches as rescue vehicle after Shenzhou 20 window damage incident"},
-  {t:"2025-11-01",s:"CMSA",h:"Shenzhou 21 crew arrives at Tiangong — Zhang Lu, Wu Fei, Zhang Hongzhang begin 6-month stay"},
-  {t:"2025-10-31",s:"Xinhua",h:"China launches youngest astronaut Wu Fei — first animal study with 4 mice onboard station"},
+  {t:"2025-11-01",s:"CMSA",h:"Shenzhou 21 crew arrives at Tiangong \u2014 Zhang Lu, Wu Fei, Zhang Hongzhang begin 6-month stay"},
+  {t:"2025-10-31",s:"Xinhua",h:"China launches youngest astronaut Wu Fei \u2014 first animal study with 4 mice onboard station"},
 ];
 
-// ─── ORBIT SIMULATION ───
-function simulateOrbit(t, inc, perMin, phase=0) {
-  const perMs = perMin*60*1000;
-  const frac = ((t+phase)%perMs)/perMs;
-  const rawLon = (frac*360+180)%360 - 180;
-  const earthRot = ((t/60000)*0.25)%360;
-  const lon = ((rawLon - earthRot + 540) % 360) - 180;
-  const lat = inc * Math.sin(frac*2*Math.PI);
+function simulateOrbit(t, inc, perMin, phase) {
+  phase = phase || 0;
+  var perMs = perMin*60*1000;
+  var frac = ((t+phase)%perMs)/perMs;
+  var rawLon = (frac*360+180)%360 - 180;
+  var earthRot = ((t/60000)*0.25)%360;
+  var lon = ((rawLon - earthRot + 540) % 360) - 180;
+  var lat = inc * Math.sin(frac*2*Math.PI);
   return {latitude:lat, longitude:lon};
 }
 
-// ─── MAIN ───
-export default function OrbitalCommand() {
+function OrbitalCommand() {
   const [iss, setIss] = useState(null);
   const [tg, setTg] = useState(null);
   const [time, setTime] = useState(Date.now());
@@ -129,68 +151,68 @@ export default function OrbitalCommand() {
   const canvasRef = useRef(null);
   const [globeRot, setGlobeRot] = useState(0);
 
-  const fetchISS = useCallback(async () => {
-    try {
-      const r = await fetch("https://api.wheretheiss.at/v1/satellites/25544");
-      if(!r.ok) throw 0;
-      const d = await r.json();
-      setIss({...d,live:true});
-      setIssTrail(p=>[...p.slice(-250),{lat:d.latitude,lon:d.longitude}]);
-    } catch {
-      const s=simulateOrbit(Date.now(),51.6,92.68,0);
-      const d={latitude:s.latitude,longitude:s.longitude,altitude:408+Math.random()*5,velocity:27580+Math.random()*40,visibility:"daylight",live:false};
-      setIss(d);setIssTrail(p=>[...p.slice(-250),{lat:d.latitude,lon:d.longitude}]);
-    }
+  const fetchISS = useCallback(function() {
+    fetch("https://api.wheretheiss.at/v1/satellites/25544")
+      .then(function(r){ if(!r.ok) throw new Error(); return r.json(); })
+      .then(function(d){
+        setIss(Object.assign({},d,{live:true}));
+        setIssTrail(function(p){return p.slice(-250).concat([{lat:d.latitude,lon:d.longitude}]);});
+      })
+      .catch(function(){
+        var s=simulateOrbit(Date.now(),51.6,92.68,0);
+        var d={latitude:s.latitude,longitude:s.longitude,altitude:408+Math.random()*5,velocity:27580+Math.random()*40,visibility:"daylight",live:false};
+        setIss(d);setIssTrail(function(p){return p.slice(-250).concat([{lat:d.latitude,lon:d.longitude}]);});
+      });
   },[]);
 
-  const updateTG = useCallback(()=>{
-    const s=simulateOrbit(Date.now(),41.5,91.4,4800000);
-    const d={latitude:s.latitude,longitude:s.longitude,altitude:388+Math.random()*8,velocity:27640+Math.random()*30,visibility:Math.random()>0.4?"daylight":"eclipsed",live:false};
-    setTg(d);setTgTrail(p=>[...p.slice(-250),{lat:d.latitude,lon:d.longitude}]);
+  const updateTG = useCallback(function(){
+    var s=simulateOrbit(Date.now(),41.5,91.4,4800000);
+    var d={latitude:s.latitude,longitude:s.longitude,altitude:388+Math.random()*8,velocity:27640+Math.random()*30,visibility:Math.random()>0.4?"daylight":"eclipsed",live:false};
+    setTg(d);setTgTrail(function(p){return p.slice(-250).concat([{lat:d.latitude,lon:d.longitude}]);});
   },[]);
 
-  useEffect(()=>{fetchISS();updateTG();const i=setInterval(()=>{fetchISS();updateTG();},4000);return()=>clearInterval(i);},[fetchISS,updateTG]);
-  useEffect(()=>{const i=setInterval(()=>setTime(Date.now()),1000);return()=>clearInterval(i);},[]);
-  useEffect(()=>{const i=setInterval(()=>setGlobeRot(r=>r+0.25),50);return()=>clearInterval(i);},[]);
+  useEffect(function(){fetchISS();updateTG();var i=setInterval(function(){fetchISS();updateTG();},4000);return function(){clearInterval(i);};},[fetchISS,updateTG]);
+  useEffect(function(){var i=setInterval(function(){setTime(Date.now());},1000);return function(){clearInterval(i);};},[]);
+  useEffect(function(){var i=setInterval(function(){setGlobeRot(function(r){return r+0.25;});},50);return function(){clearInterval(i);};},[]);
 
-  // Globe canvas
-  useEffect(()=>{
-    const cv=canvasRef.current;if(!cv)return;
-    const ctx=cv.getContext("2d"),w=cv.width,h=cv.height,cx=w/2,cy=h/2,R=Math.min(w,h)/2-8;
+  // Globe
+  useEffect(function(){
+    var cv=canvasRef.current;if(!cv)return;
+    var ctx=cv.getContext("2d"),w=cv.width,h=cv.height,cx=w/2,cy=h/2,R=Math.min(w,h)/2-8;
     ctx.clearRect(0,0,w,h);
-    const bg=ctx.createRadialGradient(cx-R*.15,cy-R*.15,R*.05,cx,cy,R);
+    var bg=ctx.createRadialGradient(cx-R*.15,cy-R*.15,R*.05,cx,cy,R);
     bg.addColorStop(0,"#0d1a0d");bg.addColorStop(1,"#040804");
     ctx.beginPath();ctx.arc(cx,cy,R,0,Math.PI*2);ctx.fillStyle=bg;ctx.fill();
     ctx.strokeStyle="#00ff4118";ctx.lineWidth=1;ctx.stroke();
     ctx.strokeStyle="#00ff410c";ctx.lineWidth=.4;
-    for(let la=-60;la<=60;la+=30){const lr=la*Math.PI/180,yp=cy-R*Math.sin(lr),xr=R*Math.cos(lr);if(xr>0){ctx.beginPath();ctx.ellipse(cx,yp,xr,xr*.12,0,0,Math.PI*2);ctx.stroke();}}
-    for(let lo=-180;lo<180;lo+=30){const lr=(lo+globeRot)*Math.PI/180;ctx.beginPath();for(let la=-90;la<=90;la+=2){const lar=la*Math.PI/180,px=cx+R*Math.cos(lar)*Math.sin(lr),py=cy-R*Math.sin(lar),z=Math.cos(lar)*Math.cos(lr);if(z>0){la===-90?ctx.moveTo(px,py):ctx.lineTo(px,py);}}ctx.stroke();}
-    for(let la=-60;la<=70;la+=2.5)for(let lo=-175;lo<=175;lo+=2.5){if(!isLand(la,lo))continue;const lar=la*Math.PI/180,lor=(lo+globeRot)*Math.PI/180,x=Math.cos(lar)*Math.sin(lor),y=-Math.sin(lar),z=Math.cos(lar)*Math.cos(lor);if(z>0){ctx.fillStyle=`rgba(0,255,65,${.12+z*.22})`;ctx.fillRect(cx+R*x-1,cy+R*y-1,2,2);}}
-    const drawSt=(d,col,lbl)=>{if(!d)return;const lar=d.latitude*Math.PI/180,lor=(d.longitude+globeRot)*Math.PI/180,x=Math.cos(lar)*Math.sin(lor),y=-Math.sin(lar),z=Math.cos(lar)*Math.cos(lor);if(z>0){const px=cx+R*x,py=cy+R*y;const g=ctx.createRadialGradient(px,py,0,px,py,14);g.addColorStop(0,col);g.addColorStop(1,"transparent");ctx.fillStyle=g;ctx.fillRect(px-14,py-14,28,28);ctx.beginPath();ctx.arc(px,py,3.5,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();ctx.fillStyle=col;ctx.font="bold 10px monospace";ctx.fillText(lbl,px+8,py-8);}};
-    drawSt(iss,"#00ff41","ISS");drawSt(tg,"#ff6b35","天宫");
+    for(var la=-60;la<=60;la+=30){var lr=la*Math.PI/180,yp=cy-R*Math.sin(lr),xr=R*Math.cos(lr);if(xr>0){ctx.beginPath();ctx.ellipse(cx,yp,xr,xr*.12,0,0,Math.PI*2);ctx.stroke();}}
+    for(var lo=-180;lo<180;lo+=30){var lr2=(lo+globeRot)*Math.PI/180;ctx.beginPath();for(var la2=-90;la2<=90;la2+=2){var lar=la2*Math.PI/180,px=cx+R*Math.cos(lar)*Math.sin(lr2),py=cy-R*Math.sin(lar),z=Math.cos(lar)*Math.cos(lr2);if(z>0){la2===-90?ctx.moveTo(px,py):ctx.lineTo(px,py);}}ctx.stroke();}
+    for(var la3=-60;la3<=70;la3+=2.5)for(var lo2=-175;lo2<=175;lo2+=2.5){if(!isLand(la3,lo2))continue;var lar2=la3*Math.PI/180,lor=(lo2+globeRot)*Math.PI/180,x=Math.cos(lar2)*Math.sin(lor),y=-Math.sin(lar2),z2=Math.cos(lar2)*Math.cos(lor);if(z2>0){ctx.fillStyle="rgba(0,255,65,"+(0.12+z2*0.22)+")";ctx.fillRect(cx+R*x-1,cy+R*y-1,2,2);}}
+    var drawSt=function(d,col,lbl){if(!d)return;var lar3=d.latitude*Math.PI/180,lor2=(d.longitude+globeRot)*Math.PI/180,x2=Math.cos(lar3)*Math.sin(lor2),y2=-Math.sin(lar3),z3=Math.cos(lar3)*Math.cos(lor2);if(z3>0){var px2=cx+R*x2,py2=cy+R*y2;var g=ctx.createRadialGradient(px2,py2,0,px2,py2,14);g.addColorStop(0,col);g.addColorStop(1,"transparent");ctx.fillStyle=g;ctx.fillRect(px2-14,py2-14,28,28);ctx.beginPath();ctx.arc(px2,py2,3.5,0,Math.PI*2);ctx.fillStyle=col;ctx.fill();ctx.fillStyle=col;ctx.font="bold 10px monospace";ctx.fillText(lbl,px2+8,py2-8);}};
+    drawSt(iss,"#00ff41","ISS");drawSt(tg,"#ff6b35","\u5929\u5BAB");
   },[globeRot,iss,tg]);
 
-  const st = STATIONS[sel], data = sel==="iss"?iss:tg;
-  const elapsed=(d)=>{const df=time-new Date(d).getTime(),dy=Math.floor(df/864e5),hr=Math.floor((df%864e5)/36e5),mn=Math.floor((df%36e5)/6e4),sc=Math.floor((df%6e4)/1e3);return{dy,hr,mn,sc};};
-  const curE = elapsed(st.launched);
-  const lonToX=(lon,w)=>((lon+180)/360)*w, latToY=(lat,h)=>((90-lat)/180)*h;
-  const fC=(v,p,n)=>v!=null?`${Math.abs(v).toFixed(4)}° ${v>=0?p:n}`:"---";
+  var st = STATIONS[sel], data = sel==="iss"?iss:tg;
+  var elapsed=function(d){var df=time-new Date(d).getTime(),dy=Math.floor(df/864e5),hr=Math.floor((df%864e5)/36e5),mn=Math.floor((df%36e5)/6e4),sc=Math.floor((df%6e4)/1e3);return{dy:dy,hr:hr,mn:mn,sc:sc};};
+  var curE = elapsed(st.launched);
+  var lonToX=function(lon,w){return((lon+180)/360)*w;};
+  var latToY=function(lat,h){return((90-lat)/180)*h;};
+  var fC=function(v,p,n){return v!=null?Math.abs(v).toFixed(4)+"\u00b0 "+(v>=0?p:n):"---";};
+  var pad2=function(n){return String(n).padStart(2,"0");};
+
+  // Pre-generate land dots for map
+  var landDots = [];
+  for(var la=-55;la<=72;la+=1.8)for(var lo=-175;lo<=175;lo+=1.8)if(isLand(la,lo))landDots.push({la:la,lo:lo});
 
   return (
     <div style={S.root}>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&display=swap');
-        @keyframes blink{0%,100%{opacity:1}50%{opacity:.2}}
-        *{scrollbar-width:thin;scrollbar-color:#00ff4122 transparent;box-sizing:border-box}
-        *::-webkit-scrollbar{width:3px}*::-webkit-scrollbar-thumb{background:#00ff4122}
-      `}</style>
       <div style={S.scan}/>
 
       {/* HEADER */}
       <header style={S.hdr}>
         <div style={S.hdrL}>
-          <span style={{color:"#00ff41",fontSize:20,fontWeight:900}}>◈</span>
-          <div><div style={S.title}>ORBITAL COMMAND</div><div style={S.sub}>DUAL STATION REAL-TIME TRACKER · ISS + TIANGONG</div></div>
+          <span style={{color:"#00ff41",fontSize:20,fontWeight:900}}>{"\u25C8"}</span>
+          <div><div style={S.title}>ORBITAL COMMAND</div><div style={S.sub}>DUAL STATION REAL-TIME TRACKER {"\u00b7"} ISS + TIANGONG</div></div>
         </div>
         <div style={S.hdrC}>
           <span style={{color:"#00ff4155",fontSize:8}}>UTC</span>{" "}
@@ -210,36 +232,34 @@ export default function OrbitalCommand() {
 
       {/* SELECTOR */}
       <div style={S.selBar}>
-        {["iss","tiangong"].map(k=>{const s=STATIONS[k];return(
-          <button key={k} onClick={()=>setSel(k)} style={{...S.selBtn,borderColor:sel===k?s.c:s.c+"22",background:sel===k?s.c+"12":"transparent",color:sel===k?s.c:s.c+"55"}}>
-            <span style={{animation:"blink 1.5s infinite",fontSize:6,marginRight:3}}>●</span>
-            {s.name} — {k==="iss"?"Expedition 74":"Shenzhou 21"}
+        {["iss","tiangong"].map(function(k){var s=STATIONS[k];return(
+          <button key={k} onClick={function(){setSel(k);}} style={Object.assign({},S.selBtn,{borderColor:sel===k?s.c:s.c+"22",background:sel===k?s.c+"12":"transparent",color:sel===k?s.c:s.c+"55"})}>
+            <span style={{animation:"blink 1.5s infinite",fontSize:6,marginRight:3}}>{"\u25CF"}</span>
+            {s.name} {"\u2014"} {k==="iss"?"Expedition 74":"Shenzhou 21"}
           </button>
         );})}
-        {iss?.live && <span style={{marginLeft:"auto",color:"#00ff41",fontSize:7,animation:"blink 2s infinite"}}>● LIVE API DATA</span>}
-        {!iss?.live && <span style={{marginLeft:"auto",color:"#ff6b35",fontSize:7}}>◌ SIMULATED</span>}
+        {iss && iss.live && <span style={{marginLeft:"auto",color:"#00ff41",fontSize:7,animation:"blink 2s infinite"}}>{"\u25CF"} LIVE API DATA</span>}
+        {iss && !iss.live && <span style={{marginLeft:"auto",color:"#ff6b35",fontSize:7}}>{"\u25CC"} SIMULATED</span>}
       </div>
 
       {/* TOP: TELEMETRY + MAP */}
       <div style={S.topRow}>
         <div style={S.telSide}>
-          <Box c={st.c} t={`${st.name} POSITION`}>
-            <TV l="LAT" v={fC(data?.latitude,"N","S")} c={st.c}/>
-            <TV l="LON" v={fC(data?.longitude,"E","W")} c={st.c}/>
-            <TV l="ALT" v={data?`${data.altitude.toFixed(1)} km`:"---"} c={st.c}/>
-            <TV l="VELOCITY" v={data?`${data.velocity.toFixed(0)} km/h`:"---"} c={st.c}/>
+          <Box c={st.c} t={st.name+" POSITION"}>
+            <TV l="LAT" v={fC(data?data.latitude:null,"N","S")} c={st.c}/>
+            <TV l="LON" v={fC(data?data.longitude:null,"E","W")} c={st.c}/>
+            <TV l="ALT" v={data?data.altitude.toFixed(1)+" km":"---"} c={st.c}/>
+            <TV l="VELOCITY" v={data?data.velocity.toFixed(0)+" km/h":"---"} c={st.c}/>
           </Box>
           <Box c={st.c} t="ORBITAL ELEMENTS">
-            {[["INCL",st.inclination],["PERIOD",st.period],["APOGEE",st.apogee],["PERIGEE",st.perigee],["ORB/DAY","~15.5"],["NORAD",st.noradId]].map(([l,v])=>
-              <TV key={l} l={l} v={v} c={st.c}/>
-            )}
+            {[["INCL",st.inclination],["PERIOD",st.period],["APOGEE",st.apogee],["PERIGEE",st.perigee],["ORB/DAY","~15.5"],["NORAD",String(st.noradId)]].map(function(x){return <TV key={x[0]} l={x[0]} v={x[1]} c={st.c}/>;})}
           </Box>
           <Box c={st.c} t="MISSION ELAPSED TIME">
             <div style={S.met}>
               <MD v={curE.dy} l="DAYS" c={st.c}/><span style={{color:st.c+"66",fontSize:14}}>:</span>
-              <MD v={String(curE.hr).padStart(2,"0")} l="HR" c={st.c}/><span style={{color:st.c+"66",fontSize:14}}>:</span>
-              <MD v={String(curE.mn).padStart(2,"0")} l="MN" c={st.c}/><span style={{color:st.c+"66",fontSize:14}}>:</span>
-              <MD v={String(curE.sc).padStart(2,"0")} l="SC" c={st.c}/>
+              <MD v={pad2(curE.hr)} l="HR" c={st.c}/><span style={{color:st.c+"66",fontSize:14}}>:</span>
+              <MD v={pad2(curE.mn)} l="MN" c={st.c}/><span style={{color:st.c+"66",fontSize:14}}>:</span>
+              <MD v={pad2(curE.sc)} l="SC" c={st.c}/>
             </div>
             <div style={{color:"#444",fontSize:7,textAlign:"center"}}>Since {st.launchLabel}</div>
           </Box>
@@ -247,27 +267,27 @@ export default function OrbitalCommand() {
 
         <div style={S.mapArea}>
           <div style={S.tabs}>
-            {[["map","◻ GROUND TRACK"],["globe","◉ 3D GLOBE"]].map(([k,l])=>(
-              <button key={k} onClick={()=>setTab(k)} style={{...S.tabBtn,...(tab===k?S.tabAct:{})}}>{l}</button>
-            ))}
+            {[["map","\u25FB GROUND TRACK"],["globe","\u25C9 3D GLOBE"]].map(function(x){return(
+              <button key={x[0]} onClick={function(){setTab(x[0]);}} style={Object.assign({},S.tabBtn,tab===x[0]?S.tabAct:{})}>{x[1]}</button>
+            );})}
           </div>
           {tab==="map"?(
             <div style={S.mapBox}>
               <svg viewBox="0 0 720 360" style={{width:"100%",display:"block"}}>
                 <defs><pattern id="g" width="40" height="40" patternUnits="userSpaceOnUse"><path d="M40 0L0 0 0 40" fill="none" stroke="#00ff4106" strokeWidth=".3"/></pattern></defs>
                 <rect width="720" height="360" fill="#040804"/><rect width="720" height="360" fill="url(#g)"/>
-                {[-60,-30,0,30,60].map(la=><g key={la}><line x1={0} y1={latToY(la,360)} x2={720} y2={latToY(la,360)} stroke="#00ff4108" strokeWidth=".3"/><text x={2} y={latToY(la,360)-1} fill="#00ff4120" fontSize="5" fontFamily="monospace">{la}°</text></g>)}
-                {[-150,-120,-90,-60,-30,0,30,60,90,120,150].map(lo=><g key={lo}><line x1={lonToX(lo,720)} y1={0} x2={lonToX(lo,720)} y2={360} stroke="#00ff4108" strokeWidth=".3"/></g>)}
-                {(()=>{const d=[];for(let la=-55;la<=72;la+=1.8)for(let lo=-175;lo<=175;lo+=1.8)if(isLand(la,lo))d.push(<rect key={`${la},${lo}`} x={lonToX(lo,720)-.6} y={latToY(la,360)-.6} width={1.2} height={1.2} fill="#00ff4116"/>);return d;})()}
-                <rect x={0} y={latToY(51.6,360)} width={720} height={latToY(-51.6,360)-latToY(51.6,360)} fill="#00ff4104" stroke="none"/>
-                <rect x={0} y={latToY(41.5,360)} width={720} height={latToY(-41.5,360)-latToY(41.5,360)} fill="#ff6b3504" stroke="none"/>
-                {issTrail.map((p,i)=>{if(!i)return null;const q=issTrail[i-1];if(Math.abs(p.lon-q.lon)>100)return null;return<line key={`i${i}`} x1={lonToX(q.lon,720)} y1={latToY(q.lat,360)} x2={lonToX(p.lon,720)} y2={latToY(p.lat,360)} stroke="#00ff41" strokeWidth=".8" opacity={.15+i/issTrail.length*.5}/>;}).filter(Boolean)}
-                {tgTrail.map((p,i)=>{if(!i)return null;const q=tgTrail[i-1];if(Math.abs(p.lon-q.lon)>100)return null;return<line key={`t${i}`} x1={lonToX(q.lon,720)} y1={latToY(q.lat,360)} x2={lonToX(p.lon,720)} y2={latToY(p.lat,360)} stroke="#ff6b35" strokeWidth=".8" opacity={.15+i/tgTrail.length*.5}/>;}).filter(Boolean)}
-                {iss&&<g><circle cx={lonToX(iss.longitude,720)} cy={latToY(iss.latitude,360)} r="14" fill="#00ff4108"><animate attributeName="r" values="8;18;8" dur="2s" repeatCount="indefinite"/></circle><circle cx={lonToX(iss.longitude,720)} cy={latToY(iss.latitude,360)} r="4" fill="#00ff41"><animate attributeName="r" values="3;5;3" dur="2s" repeatCount="indefinite"/></circle><text x={lonToX(iss.longitude,720)+8} y={latToY(iss.latitude,360)-7} fill="#00ff41" fontSize="8" fontWeight="bold" fontFamily="monospace">ISS</text><text x={lonToX(iss.longitude,720)+8} y={latToY(iss.latitude,360)+2} fill="#00ff4166" fontSize="6" fontFamily="monospace">{iss.altitude.toFixed(0)}km · {iss.velocity.toFixed(0)}km/h</text></g>}
-                {tg&&<g><circle cx={lonToX(tg.longitude,720)} cy={latToY(tg.latitude,360)} r="14" fill="#ff6b3508"><animate attributeName="r" values="8;18;8" dur="2s" repeatCount="indefinite"/></circle><circle cx={lonToX(tg.longitude,720)} cy={latToY(tg.latitude,360)} r="4" fill="#ff6b35"><animate attributeName="r" values="3;5;3" dur="2s" repeatCount="indefinite"/></circle><text x={lonToX(tg.longitude,720)+8} y={latToY(tg.latitude,360)-7} fill="#ff6b35" fontSize="8" fontWeight="bold" fontFamily="monospace">天宫 CSS</text><text x={lonToX(tg.longitude,720)+8} y={latToY(tg.latitude,360)+2} fill="#ff6b3566" fontSize="6" fontFamily="monospace">{tg.altitude.toFixed(0)}km · {tg.velocity.toFixed(0)}km/h</text></g>}
+                {[-60,-30,0,30,60].map(function(la){return <g key={la}><line x1={0} y1={latToY(la,360)} x2={720} y2={latToY(la,360)} stroke="#00ff4108" strokeWidth=".3"/><text x={2} y={latToY(la,360)-1} fill="#00ff4120" fontSize="5" fontFamily="monospace">{la+"\u00b0"}</text></g>;})}
+                {[-150,-120,-90,-60,-30,0,30,60,90,120,150].map(function(lo){return <line key={lo} x1={lonToX(lo,720)} y1={0} x2={lonToX(lo,720)} y2={360} stroke="#00ff4108" strokeWidth=".3"/>;})}
+                {landDots.map(function(d){return <rect key={d.la+","+d.lo} x={lonToX(d.lo,720)-.6} y={latToY(d.la,360)-.6} width={1.2} height={1.2} fill="#00ff4116"/>;})}
+                <rect x={0} y={latToY(51.6,360)} width={720} height={latToY(-51.6,360)-latToY(51.6,360)} fill="#00ff4104"/>
+                <rect x={0} y={latToY(41.5,360)} width={720} height={latToY(-41.5,360)-latToY(41.5,360)} fill="#ff6b3504"/>
+                {issTrail.map(function(p,i){if(!i)return null;var q=issTrail[i-1];if(Math.abs(p.lon-q.lon)>100)return null;return <line key={"i"+i} x1={lonToX(q.lon,720)} y1={latToY(q.lat,360)} x2={lonToX(p.lon,720)} y2={latToY(p.lat,360)} stroke="#00ff41" strokeWidth=".8" opacity={.15+i/issTrail.length*.5}/>;}).filter(Boolean)}
+                {tgTrail.map(function(p,i){if(!i)return null;var q=tgTrail[i-1];if(Math.abs(p.lon-q.lon)>100)return null;return <line key={"t"+i} x1={lonToX(q.lon,720)} y1={latToY(q.lat,360)} x2={lonToX(p.lon,720)} y2={latToY(p.lat,360)} stroke="#ff6b35" strokeWidth=".8" opacity={.15+i/tgTrail.length*.5}/>;}).filter(Boolean)}
+                {iss&&<g><circle cx={lonToX(iss.longitude,720)} cy={latToY(iss.latitude,360)} r="14" fill="#00ff4108"><animate attributeName="r" values="8;18;8" dur="2s" repeatCount="indefinite"/></circle><circle cx={lonToX(iss.longitude,720)} cy={latToY(iss.latitude,360)} r="4" fill="#00ff41"><animate attributeName="r" values="3;5;3" dur="2s" repeatCount="indefinite"/></circle><text x={lonToX(iss.longitude,720)+8} y={latToY(iss.latitude,360)-7} fill="#00ff41" fontSize="8" fontWeight="bold" fontFamily="monospace">ISS</text><text x={lonToX(iss.longitude,720)+8} y={latToY(iss.latitude,360)+2} fill="#00ff4166" fontSize="6" fontFamily="monospace">{iss.altitude.toFixed(0)+"km \u00b7 "+iss.velocity.toFixed(0)+"km/h"}</text></g>}
+                {tg&&<g><circle cx={lonToX(tg.longitude,720)} cy={latToY(tg.latitude,360)} r="14" fill="#ff6b3508"><animate attributeName="r" values="8;18;8" dur="2s" repeatCount="indefinite"/></circle><circle cx={lonToX(tg.longitude,720)} cy={latToY(tg.latitude,360)} r="4" fill="#ff6b35"><animate attributeName="r" values="3;5;3" dur="2s" repeatCount="indefinite"/></circle><text x={lonToX(tg.longitude,720)+8} y={latToY(tg.latitude,360)-7} fill="#ff6b35" fontSize="8" fontWeight="bold" fontFamily="monospace">{"\u5929\u5BAB CSS"}</text><text x={lonToX(tg.longitude,720)+8} y={latToY(tg.latitude,360)+2} fill="#ff6b3566" fontSize="6" fontFamily="monospace">{tg.altitude.toFixed(0)+"km \u00b7 "+tg.velocity.toFixed(0)+"km/h"}</text></g>}
                 <rect x={6} y={6} width={155} height={38} fill="#040804dd" stroke="#00ff4118" rx={2}/>
-                <circle cx={15} cy={15} r={3} fill="#00ff41"/><text x={22} y={18} fill="#00ff41" fontSize="7" fontFamily="monospace">ISS 25544 · 51.6° incl</text>
-                <circle cx={15} cy={30} r={3} fill="#ff6b35"/><text x={22} y={33} fill="#ff6b35" fontSize="7" fontFamily="monospace">天宫 48274 · 41.5° incl</text>
+                <circle cx={15} cy={15} r={3} fill="#00ff41"/><text x={22} y={18} fill="#00ff41" fontSize="7" fontFamily="monospace">{"ISS 25544 \u00b7 51.6\u00b0 incl"}</text>
+                <circle cx={15} cy={30} r={3} fill="#ff6b35"/><text x={22} y={33} fill="#ff6b35" fontSize="7" fontFamily="monospace">{"\u5929\u5BAB 48274 \u00b7 41.5\u00b0 incl"}</text>
               </svg>
             </div>
           ):(
@@ -276,32 +296,28 @@ export default function OrbitalCommand() {
         </div>
 
         <div style={S.telSide}>
-          <Box c={st.c} t={`${st.name} SPECS`}>
-            {[["Mass",st.mass],["Length",st.length],["Width",st.width],["Volume",st.pressVol],["Power",st.power],["Modules",st.modules]].map(([l,v])=>
-              <SR key={l} l={l} v={v} c={st.c}/>
-            )}
+          <Box c={st.c} t={st.name+" SPECS"}>
+            {[["Mass",st.mass],["Length",st.length],["Width",st.width],["Volume",st.pressVol],["Power",st.power],["Modules",String(st.modules)]].map(function(x){return <SR key={x[0]} l={x[0]} v={x[1]} c={st.c}/>;})}
           </Box>
           <Box c={st.c} t="DOCKING PORTS">
-            {st.docking.map((d,i)=>
-              <div key={i} style={{...S.sr,borderLeft:`2px solid ${d.color}`,paddingLeft:6}}>
+            {st.docking.map(function(d,i){return(
+              <div key={i} style={Object.assign({},S.sr,{borderLeft:"2px solid "+d.color,paddingLeft:6})}>
                 <span style={{color:"#555"}}>{d.port}</span>
                 <span style={{color:d.color,fontWeight:600}}>{d.status}</span>
               </div>
-            )}
+            );})}
           </Box>
           <Box c="#ffb000" t="SPACE WEATHER">
-            {[["Solar Activity","MODERATE","#ffb000"],["Kp Index","3","#ffb000"],["Solar Wind","420 km/s","#00ff41"],["X-ray Flux","B4.2","#00ff41"],["Proton","NOMINAL","#00ff41"],["Geomag","QUIET","#00ff41"]].map(([l,v,c])=>
-              <SR key={l} l={l} v={v} c={c}/>
-            )}
+            {[["Solar Activity","MODERATE","#ffb000"],["Kp Index","3","#ffb000"],["Solar Wind","420 km/s","#00ff41"],["X-ray Flux","B4.2","#00ff41"],["Proton","NOMINAL","#00ff41"],["Geomag","QUIET","#00ff41"]].map(function(x){return <SR key={x[0]} l={x[0]} v={x[1]} c={x[2]}/>;})}
           </Box>
         </div>
       </div>
 
-      {/* STATION DIAGRAMS */}
+      {/* DIAGRAMS */}
       <div style={S.diagRow}>
-        <Box c="#00ff41" t="ISS MODULE LAYOUT — 16 Pressurized Modules · 109m × 73m · 420t">
+        <Box c="#00ff41" t={"ISS MODULE LAYOUT \u2014 16 Pressurized Modules \u00b7 109m \u00d7 73m \u00b7 420t"}>
           <svg viewBox="0 0 700 200" style={{width:"100%"}}>
-            {[[-5,38],[142,38],[392,38],[542,38]].map(([x,y],i)=><g key={`s${i}`}><rect x={x} y={y-12} width={52} height={5} fill="#00ff4108" stroke="#00ff4130" rx={1}/><rect x={x} y={y+22} width={52} height={5} fill="#00ff4108" stroke="#00ff4130" rx={1}/><line x1={x+26} y1={y-7} x2={x+26} y2={y+22} stroke="#00ff4125" strokeWidth={.5}/></g>)}
+            {[[-5,38],[142,38],[392,38],[542,38]].map(function(a,i){return <g key={"s"+i}><rect x={a[0]} y={a[1]-12} width={52} height={5} fill="#00ff4108" stroke="#00ff4130" rx={1}/><rect x={a[0]} y={a[1]+22} width={52} height={5} fill="#00ff4108" stroke="#00ff4130" rx={1}/><line x1={a[0]+26} y1={a[1]-7} x2={a[0]+26} y2={a[1]+22} stroke="#00ff4125" strokeWidth={.5}/></g>;})}
             <rect x={32} y={42} width={525} height={7} fill="#00ff410a" stroke="#00ff4135" rx={1}/>
             <text x={294} y={39} fill="#00ff4125" fontSize="6" textAnchor="middle" fontFamily="monospace">INTEGRATED TRUSS</text>
             <rect x={200} y={62} width={52} height={25} fill="#00ff4110" stroke="#00ff4150" rx={2}/><text x={226} y={78} fill="#00ff41" fontSize="6" textAnchor="middle" fontFamily="monospace">ZARYA</text><text x={226} y={93} fill="#00ff4133" fontSize="4.5" textAnchor="middle" fontFamily="monospace">FGB 1998</text>
@@ -320,19 +336,19 @@ export default function OrbitalCommand() {
             <g transform="translate(545,62)"><rect width={7} height={7} fill="#00ff4115" stroke="#00ff4160"/><text x={10} y={6} fill="#00ff4177" fontSize="5.5" fontFamily="monospace">NASA/Roscosmos</text><rect y={12} width={7} height={7} fill="#3388ff15" stroke="#3388ff50"/><text x={10} y={18} fill="#3388ff77" fontSize="5.5" fontFamily="monospace">ESA</text><rect y={24} width={7} height={7} fill="#ff444415" stroke="#ff444450"/><text x={10} y={30} fill="#ff444477" fontSize="5.5" fontFamily="monospace">JAXA</text></g>
           </svg>
         </Box>
-        <Box c="#ff6b35" t="TIANGONG LAYOUT — Tianhe 天和 + Wentian 问天 + Mengtian 梦天 · ~100t">
+        <Box c="#ff6b35" t={"TIANGONG LAYOUT \u2014 Tianhe \u5929\u548C + Wentian \u95EE\u5929 + Mengtian \u68A6\u5929 \u00b7 ~100t"}>
           <svg viewBox="0 0 700 180" style={{width:"100%"}}>
-            <rect x={280} y={8} width={140} height={35} fill="#ff6b350e" stroke="#ff6b3550" rx={3}/><text x={350} y={25} fill="#ff6b35" fontSize="8" textAnchor="middle" fontWeight="bold" fontFamily="monospace">WENTIAN 问天</text><text x={350} y={37} fill="#ff6b3555" fontSize="5.5" textAnchor="middle" fontFamily="monospace">Lab I · Jul 2022 · 23t · Airlock + arm</text>
-            {[[222,16],[422,16],[222,32],[422,32]].map(([x,y],i)=><rect key={i} x={x} y={y} width={52} height={4} fill="#ff6b3508" stroke="#ff6b3530" rx={1}/>)}
+            <rect x={280} y={8} width={140} height={35} fill="#ff6b350e" stroke="#ff6b3550" rx={3}/><text x={350} y={25} fill="#ff6b35" fontSize="8" textAnchor="middle" fontWeight="bold" fontFamily="monospace">{"\u95EE\u5929 WENTIAN"}</text><text x={350} y={37} fill="#ff6b3555" fontSize="5.5" textAnchor="middle" fontFamily="monospace">{"Lab I \u00b7 Jul 2022 \u00b7 23t \u00b7 Airlock + arm"}</text>
+            {[[222,16],[422,16],[222,32],[422,32]].map(function(a,i){return <rect key={i} x={a[0]} y={a[1]} width={52} height={4} fill="#ff6b3508" stroke="#ff6b3530" rx={1}/>;})}
             <line x1={350} y1={43} x2={350} y2={55} stroke="#ff6b3540" strokeWidth={1.5}/>
-            <rect x={250} y={55} width={200} height={42} fill="#ff6b3515" stroke="#ff6b35aa" rx={3} strokeWidth={1.2}/><text x={350} y={75} fill="#ff6b35" fontSize="10" textAnchor="middle" fontWeight="bold" fontFamily="monospace">TIANHE 天和</text><text x={350} y={88} fill="#ff6b3566" fontSize="5.5" textAnchor="middle" fontFamily="monospace">Core · Apr 2021 · 22.6t · Crew quarters · Life support · Navigation</text>
-            {[[170,66],[170,77],[452,66],[452,77]].map(([x,y],i)=><rect key={i} x={x} y={y} width={75} height={4} fill="#ff6b3508" stroke="#ff6b3530" rx={1}/>)}
+            <rect x={250} y={55} width={200} height={42} fill="#ff6b3515" stroke="#ff6b35aa" rx={3} strokeWidth={1.2}/><text x={350} y={75} fill="#ff6b35" fontSize="10" textAnchor="middle" fontWeight="bold" fontFamily="monospace">{"\u5929\u548C TIANHE"}</text><text x={350} y={88} fill="#ff6b3566" fontSize="5.5" textAnchor="middle" fontFamily="monospace">{"Core \u00b7 Apr 2021 \u00b7 22.6t \u00b7 Crew quarters \u00b7 Life support \u00b7 Navigation"}</text>
+            {[[170,66],[170,77],[452,66],[452,77]].map(function(a,i){return <rect key={i} x={a[0]} y={a[1]} width={75} height={4} fill="#ff6b3508" stroke="#ff6b3530" rx={1}/>;})}
             <line x1={350} y1={97} x2={350} y2={109} stroke="#ff6b3540" strokeWidth={1.5}/>
-            <rect x={280} y={109} width={140} height={35} fill="#ff6b350e" stroke="#ff6b3550" rx={3}/><text x={350} y={126} fill="#ff6b35" fontSize="8" textAnchor="middle" fontWeight="bold" fontFamily="monospace">MENGTIAN 梦天</text><text x={350} y={138} fill="#ff6b3555" fontSize="5.5" textAnchor="middle" fontFamily="monospace">Lab II · Oct 2022 · 23t · Sci payloads</text>
+            <rect x={280} y={109} width={140} height={35} fill="#ff6b350e" stroke="#ff6b3550" rx={3}/><text x={350} y={126} fill="#ff6b35" fontSize="8" textAnchor="middle" fontWeight="bold" fontFamily="monospace">{"\u68A6\u5929 MENGTIAN"}</text><text x={350} y={138} fill="#ff6b3555" fontSize="5.5" textAnchor="middle" fontFamily="monospace">{"Lab II \u00b7 Oct 2022 \u00b7 23t \u00b7 Sci payloads"}</text>
             <rect x={455} y={58} width={75} height={16} fill="#ff6b3508" stroke="#ff6b3530" rx={2}/><text x={492} y={69} fill="#ff6b3577" fontSize="5.5" textAnchor="middle" fontFamily="monospace">TIANZHOU 9 cargo</text>
             <rect x={170} y={58} width={75} height={16} fill="#ff6b350e" stroke="#ff6b3550" rx={2}/><text x={207} y={69} fill="#ff6b35" fontSize="5.5" textAnchor="middle" fontFamily="monospace">SHENZHOU 21</text>
-            <rect x={170} y={80} width={75} height={16} fill="#ff333315" stroke="#ff333355" rx={2}/><text x={207} y={90} fill="#ff3333" fontSize="5" textAnchor="middle" fontFamily="monospace">SHENZHOU 22 ⚠ rescue</text>
-            <rect x={510} y={109} width={120} height={24} fill="#ff6b3508" stroke="#ff6b3520" rx={2} strokeDasharray="2,2"/><text x={570} y={121} fill="#ff6b3555" fontSize="5.5" textAnchor="middle" fontFamily="monospace">XUNTIAN 巡天 telescope</text><text x={570} y={130} fill="#ff6b3533" fontSize="4.5" textAnchor="middle" fontFamily="monospace">Co-orbiting · Launch late 2026</text>
+            <rect x={170} y={80} width={75} height={16} fill="#ff333315" stroke="#ff333355" rx={2}/><text x={207} y={90} fill="#ff3333" fontSize="5" textAnchor="middle" fontFamily="monospace">{"\u26A0 SHENZHOU 22 rescue"}</text>
+            <rect x={510} y={109} width={120} height={24} fill="#ff6b3508" stroke="#ff6b3520" rx={2} strokeDasharray="2,2"/><text x={570} y={121} fill="#ff6b3555" fontSize="5.5" textAnchor="middle" fontFamily="monospace">{"\u5DE1\u5929 XUNTIAN telescope"}</text><text x={570} y={130} fill="#ff6b3533" fontSize="4.5" textAnchor="middle" fontFamily="monospace">Co-orbiting · Launch late 2026</text>
           </svg>
         </Box>
       </div>
@@ -340,70 +356,70 @@ export default function OrbitalCommand() {
       {/* BOTTOM: COMMS + CREW + NEWS */}
       <div style={S.bRow}>
         <div style={S.bCol}>
-          <Box c={st.c} t={`${st.name} COMMS & FREQUENCIES`}>
-            {st.comms.map((c,i)=><div key={i} style={{padding:"4px 5px",background:"#04070499",borderLeft:`2px solid ${st.c}44`,marginBottom:3}}>
+          <Box c={st.c} t={st.name+" COMMS & FREQUENCIES"}>
+            {st.comms.map(function(c,i){return <div key={i} style={{padding:"4px 5px",background:"#04070499",borderLeft:"2px solid "+st.c+"44",marginBottom:3}}>
               <div style={{display:"flex",justifyContent:"space-between"}}><span style={{color:st.c,fontWeight:700,fontSize:9}}>{c.band}</span><span style={{color:st.c+"88",fontSize:8}}>{c.freq}</span></div>
               <div style={{color:"#555",fontSize:7,marginTop:1}}>{c.use}</div>
-            </div>)}
+            </div>;})}
           </Box>
-          <Box c={st.c} t={`${st.name} OPERATIONS`}>
-            {st.ops.map(([l,v])=><SR key={l} l={l} v={v} c="#999"/>)}
+          <Box c={st.c} t={st.name+" OPERATIONS"}>
+            {st.ops.map(function(x){return <SR key={x[0]} l={x[0]} v={x[1]} c="#999"/>;})}
           </Box>
         </div>
 
         <div style={S.bCol}>
-          <Box c="#00ff41" t={`ISS CREW — Expedition 74 (${STATIONS.iss.crew.length})`}>
-            {STATIONS.iss.crew.map((c,i)=><div key={i} style={{padding:"3px 5px",background:"#04070499",borderLeft:"2px solid #00ff4130",marginBottom:2}}>
+          <Box c="#00ff41" t={"ISS CREW \u2014 Expedition 74 ("+STATIONS.iss.crew.length+")"}>
+            {STATIONS.iss.crew.map(function(c,i){return <div key={i} style={{padding:"3px 5px",background:"#04070499",borderLeft:"2px solid #00ff4130",marginBottom:2}}>
               <div style={{color:"#00ff41",fontWeight:700,fontSize:9}}>{c.flag} {c.name}</div>
-              <div style={{color:"#555",fontSize:7}}>{c.role} · {c.agency} · {c.mission}</div>
-            </div>)}
+              <div style={{color:"#555",fontSize:7}}>{c.role+" \u00b7 "+c.agency+" \u00b7 "+c.mission}</div>
+            </div>;})}
           </Box>
-          <Box c="#ff6b35" t={`TIANGONG — Shenzhou 21 (${STATIONS.tiangong.crew.length})`}>
-            {STATIONS.tiangong.crew.map((c,i)=><div key={i} style={{padding:"3px 5px",background:"#04070499",borderLeft:"2px solid #ff6b3530",marginBottom:2}}>
+          <Box c="#ff6b35" t={"TIANGONG \u2014 Shenzhou 21 ("+STATIONS.tiangong.crew.length+")"}>
+            {STATIONS.tiangong.crew.map(function(c,i){return <div key={i} style={{padding:"3px 5px",background:"#04070499",borderLeft:"2px solid #ff6b3530",marginBottom:2}}>
               <div style={{color:"#ff6b35",fontWeight:700,fontSize:9}}>{c.flag} {c.name}</div>
-              <div style={{color:"#555",fontSize:7}}>{c.role} · {c.agency} · {c.mission}</div>
-            </div>)}
+              <div style={{color:"#555",fontSize:7}}>{c.role+" \u00b7 "+c.agency+" \u00b7 "+c.mission}</div>
+            </div>;})}
           </Box>
           <Box c="#00ff41" t="ISS vs TIANGONG">
-            {[["","ISS","Tiangong"],["Mass","420 t","100 t"],["Volume","916 m³","340 m³"],["Modules","16","3 (+tel)"],["Crew","7","3"],["Power","215 kW","100 kW"],["Incl","51.6°","41.5°"],["Since","1998","2021"],["EOL","~2030","~2035+"]].map((r,i)=>
+            {[["","ISS","Tiangong"],["Mass","420 t","100 t"],["Volume","916 m\u00b3","340 m\u00b3"],["Modules","16","3 (+tel)"],["Crew","7","3"],["Power","215 kW","100 kW"],["Incl","51.6\u00b0","41.5\u00b0"],["Since","1998","2021"],["EOL","~2030","~2035+"]].map(function(r,i){return(
               <div key={i} style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:3,padding:"2px 3px",background:!i?"#ffffff06":"transparent",borderBottom:"1px solid #ffffff05"}}>
                 <span style={{color:!i?"#fff":"#555",fontSize:!i?8:7,fontWeight:!i?700:400}}>{r[0]}</span>
                 <span style={{color:!i?"#00ff41":"#00ff41aa",fontSize:!i?8:7,textAlign:"center"}}>{r[1]}</span>
                 <span style={{color:!i?"#ff6b35":"#ff6b35aa",fontSize:!i?8:7,textAlign:"center"}}>{r[2]}</span>
               </div>
-            )}
+            );})}
           </Box>
         </div>
 
         <div style={S.bCol}>
           <Box c="#ffb000" t="LIVE NEWS FEED">
             <div style={{maxHeight:500,overflow:"auto",display:"flex",flexDirection:"column",gap:3}}>
-              {NEWS.map((n,i)=><div key={i} style={{padding:"4px 5px",background:"#04070499",borderLeft:"2px solid #ffb00030"}}>
-                <div style={{color:"#ffb00066",fontSize:7}}>{n.t} · {n.s}</div>
+              {NEWS.map(function(n,i){return <div key={i} style={{padding:"4px 5px",background:"#04070499",borderLeft:"2px solid #ffb00030"}}>
+                <div style={{color:"#ffb00066",fontSize:7}}>{n.t+" \u00b7 "+n.s}</div>
                 <div style={{color:"#bbb",fontSize:8,marginTop:1,lineHeight:1.3}}>{n.h}</div>
-              </div>)}
+              </div>;})}
             </div>
           </Box>
         </div>
       </div>
 
       <footer style={S.footer}>
-        <span>ORBITAL COMMAND v3.0</span><span style={{color:"#222"}}>·</span>
-        <span>ISS data: wheretheiss.at</span><span style={{color:"#222"}}>·</span>
-        <span>Tiangong: simulated</span><span style={{color:"#222"}}>·</span>
-        <span>Crew: NASA/CMSA Apr 2026</span><span style={{color:"#222"}}>·</span>
+        <span>ORBITAL COMMAND v3.1</span><span style={{color:"#222"}}>{"\u00b7"}</span>
+        <span>ISS data: wheretheiss.at</span><span style={{color:"#222"}}>{"\u00b7"}</span>
+        <span>Tiangong: simulated</span><span style={{color:"#222"}}>{"\u00b7"}</span>
+        <span>Crew: NASA/CMSA Apr 2026</span><span style={{color:"#222"}}>{"\u00b7"}</span>
         <span>Updates 4s</span>
       </footer>
     </div>
   );
 }
 
-function Box({c,t,children}){return <div style={{border:`1px solid ${c}28`,background:"#090d09",padding:"8px 9px",marginBottom:0}}><div style={{color:c,fontSize:8,fontWeight:700,letterSpacing:1.8,marginBottom:6,paddingBottom:4,borderBottom:"1px solid #ffffff06"}}>▸ {t}</div>{children}</div>;}
-function TV({l,v,c}){return <div style={{padding:"3px 5px",background:"#04070499",border:"1px solid #ffffff05",marginBottom:2}}><div style={{color:"#555",fontSize:6.5,letterSpacing:1.2}}>{l}</div><div style={{color:c,fontSize:10,fontWeight:700}}>{v}</div></div>;}
-function MD({v,l,c}){return <div style={{textAlign:"center"}}><div style={{color:c,fontSize:16,fontWeight:800,fontVariantNumeric:"tabular-nums"}}>{v}</div><div style={{color:c+"44",fontSize:6,letterSpacing:1.5}}>{l}</div></div>;}
-function SR({l,v,c}){return <div style={S.sr}><span style={{color:"#555"}}>{l}</span><span style={{color:c||"#00ff41",fontWeight:600,textAlign:"right",maxWidth:"62%"}}>{v}</span></div>;}
+function Box(props){return <div style={{border:"1px solid "+props.c+"28",background:"#090d09",padding:"8px 9px"}}><div style={{color:props.c,fontSize:8,fontWeight:700,letterSpacing:1.8,marginBottom:6,paddingBottom:4,borderBottom:"1px solid #ffffff06"}}>{"\u25B8 "+props.t}</div>{props.children}</div>;}
+function TV(props){return <div style={{padding:"3px 5px",background:"#04070499",border:"1px solid #ffffff05",marginBottom:2}}><div style={{color:"#555",fontSize:6.5,letterSpacing:1.2}}>{props.l}</div><div style={{color:props.c,fontSize:10,fontWeight:700}}>{props.v}</div></div>;}
+function MD(props){return <div style={{textAlign:"center"}}><div style={{color:props.c,fontSize:16,fontWeight:800,fontVariantNumeric:"tabular-nums"}}>{props.v}</div><div style={{color:props.c+"44",fontSize:6,letterSpacing:1.5}}>{props.l}</div></div>;}
+function SR(props){return <div style={S.sr}><span style={{color:"#555"}}>{props.l}</span><span style={{color:props.c||"#00ff41",fontWeight:600,textAlign:"right",maxWidth:"62%"}}>{props.v}</span></div>;}
 
-const S={
+var S={
   root:{fontFamily:"'JetBrains Mono',monospace",background:"#070a07",color:"#00ff41",minHeight:"100vh",position:"relative",fontSize:9},
   scan:{position:"fixed",inset:0,background:"repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.015) 2px,rgba(0,0,0,0.015) 4px)",pointerEvents:"none",zIndex:9999},
   hdr:{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"8px 14px",borderBottom:"1px solid #00ff4115",background:"linear-gradient(180deg,#0a0f0a,#070a07)",flexWrap:"wrap",gap:6},
@@ -416,7 +432,7 @@ const S={
   telSide:{display:"flex",flexDirection:"column",gap:5,minWidth:0},
   mapArea:{display:"flex",flexDirection:"column",minWidth:0},
   tabs:{display:"flex",gap:0,alignItems:"center"},
-  tabBtn:{flex:"0 0 auto",background:"#090d09",border:"1px solid #00ff4118",borderBottom:"none",color:"#00ff4133",padding:"5px 12px",fontFamily:"inherit",fontSize:8,letterSpacing:2,cursor:"pointer",fontWeight:600},
+  tabBtn:{flex:"0 0 auto",background:"#090d09",border:"1px solid #00ff4118",borderBottom:"none",color:"#00ff4133",padding:"5px 12px",fontFamily:"'JetBrains Mono',monospace",fontSize:8,letterSpacing:2,cursor:"pointer",fontWeight:600},
   tabAct:{background:"#040804",color:"#00ff41",borderColor:"#00ff4140"},
   mapBox:{border:"1px solid #00ff4118",borderTop:"none",background:"#040804",overflow:"hidden",aspectRatio:"2/1"},
   globeBox:{border:"1px solid #00ff4118",borderTop:"none",background:"#040804",display:"flex",justifyContent:"center",padding:6,aspectRatio:"2/1"},
@@ -427,3 +443,8 @@ const S={
   met:{display:"flex",alignItems:"center",justifyContent:"center",gap:3,padding:"4px 0"},
   footer:{display:"flex",justifyContent:"center",gap:5,padding:"6px 14px",borderTop:"1px solid #00ff410e",color:"#00ff4120",fontSize:6.5,letterSpacing:1,flexWrap:"wrap"},
 };
+
+ReactDOM.createRoot(document.getElementById("root")).render(<OrbitalCommand/>);
+</script>
+</body>
+</html>
