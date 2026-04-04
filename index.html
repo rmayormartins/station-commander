@@ -1,0 +1,1051 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Orbital Command — ISS & Tiangong Live Tracker</title>
+<meta name="description" content="Real-time tactical tracker for the International Space Station (ISS) and China's Tiangong. Live telemetry, docked vehicles, module diagrams, crew, health monitoring.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box;scrollbar-width:thin;scrollbar-color:#00ff4122 transparent}
+  *::-webkit-scrollbar{width:4px;height:4px}*::-webkit-scrollbar-thumb{background:#00ff4122}*::-webkit-scrollbar-track{background:transparent}
+  html,body{background:#000;font-family:'JetBrains Mono',ui-monospace,monospace;color:#00ff41;min-height:100vh}
+  body{overflow-x:hidden}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
+  @keyframes pulse-glow{0%,100%{box-shadow:0 0 4px #00ff41,0 0 8px #00ff4155}50%{box-shadow:0 0 10px #00ff41,0 0 20px #00ff4188}}
+  @keyframes scan{0%{top:-2px}100%{top:100%}}
+  @keyframes flicker{0%,100%{opacity:.98}50%{opacity:1}}
+  #root{min-height:100vh}
+  .crt::before{content:"";position:fixed;inset:0;background:repeating-linear-gradient(0deg,rgba(0,255,65,0.02) 0,rgba(0,255,65,0.02) 1px,transparent 1px,transparent 3px);pointer-events:none;z-index:9998}
+  .crt::after{content:"";position:fixed;inset:0;background:radial-gradient(ellipse at center,transparent 0%,rgba(0,0,0,0.35) 100%);pointer-events:none;z-index:9997}
+  .sw-bar{height:3px;background:linear-gradient(90deg,#00ff41 0%,#00ff41 var(--pct),#00ff4108 var(--pct),#00ff4108 100%)}
+  .btn{cursor:pointer;font-family:inherit;transition:all .15s}
+  .btn:hover{filter:brightness(1.3)}
+  .ascii{font-family:'JetBrains Mono',monospace;white-space:pre;line-height:1;letter-spacing:0}
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="crt">
+<div id="root"></div>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ORBITAL COMMAND v4.0  —  ISS & TIANGONG TACTICAL TRACKER
+   Styled after jasperbernaers.com/artemis-ii-tracker
+   ═══════════════════════════════════════════════════════════════════════ */
+
+// ─── LAND MASK ─────────────────────────────────────────────────────────
+const LAND_REGIONS = [
+  {latMin:25,latMax:50,lonMin:-130,lonMax:-65},{latMin:50,latMax:72,lonMin:-170,lonMax:-55},
+  {latMin:15,latMax:30,lonMin:-118,lonMax:-85},{latMin:8,latMax:22,lonMin:-90,lonMax:-60},
+  {latMin:-5,latMax:12,lonMin:-82,lonMax:-50},{latMin:-25,latMax:-5,lonMin:-75,lonMax:-35},
+  {latMin:-40,latMax:-25,lonMin:-72,lonMax:-48},{latMin:-55,latMax:-40,lonMin:-75,lonMax:-62},
+  {latMin:36,latMax:60,lonMin:-10,lonMax:30},{latMin:55,latMax:71,lonMin:5,lonMax:40},
+  {latMin:38,latMax:45,lonMin:-10,lonMax:5},{latMin:20,latMax:37,lonMin:-17,lonMax:35},
+  {latMin:0,latMax:20,lonMin:-18,lonMax:50},{latMin:-15,latMax:0,lonMin:10,lonMax:42},
+  {latMin:-35,latMax:-15,lonMin:15,lonMax:40},{latMin:40,latMax:55,lonMin:30,lonMax:60},
+  {latMin:50,latMax:72,lonMin:40,lonMax:180},{latMin:35,latMax:50,lonMin:60,lonMax:140},
+  {latMin:20,latMax:42,lonMin:65,lonMax:125},{latMin:5,latMax:20,lonMin:68,lonMax:92},
+  {latMin:-10,latMax:20,lonMin:95,lonMax:140},{latMin:30,latMax:42,lonMin:125,lonMax:145},
+  {latMin:12,latMax:38,lonMin:32,lonMax:62},{latMin:-40,latMax:-12,lonMin:114,lonMax:153},
+  {latMin:-47,latMax:-34,lonMin:166,lonMax:178},{latMin:60,latMax:83,lonMin:-55,lonMax:-15},
+  {latMin:50,latMax:59,lonMin:-11,lonMax:2},{latMin:-8,latMax:8,lonMin:95,lonMax:130},
+  {latMin:5,latMax:20,lonMin:117,lonMax:127},
+];
+const isLand = (lat,lon) => LAND_REGIONS.some(r => lat>=r.latMin && lat<=r.latMax && lon>=r.lonMin && lon<=r.lonMax);
+
+// ─── ORBIT SIMULATION ───────────────────────────────────────────────────
+function simulateOrbit(t, inc, perMin, phase) {
+  phase = phase || 0;
+  var perMs = perMin*60*1000;
+  var frac = ((t+phase)%perMs)/perMs;
+  var rawLon = (frac*360+180)%360 - 180;
+  var earthRot = ((t/60000)*0.25)%360;
+  var lon = ((rawLon - earthRot + 540) % 360) - 180;
+  var lat = inc * Math.sin(frac*2*Math.PI);
+  return {latitude:lat, longitude:lon};
+}
+
+// ─── STATION DATA ───────────────────────────────────────────────────────
+const ISS_DATA = {
+  name:"ISS", fullName:"International Space Station", noradId:25544,
+  launched:"1998-11-20T06:40:00Z", launchLabel:"Nov 20, 1998",
+  expedition:"74", mission:"Expedition 74",
+  crewCount:7, partners:5,
+  mass:"419,725 kg", volume:"916 m\u00b3", modules:16, power:"215 kW",
+  length:"109 m", width:"73 m", arrays:"8 \u00d7 USOS arrays",
+  inclination:51.64, period:92.68, apogee:422, perigee:418, altitude:408,
+  agencies:"NASA \u00b7 Roscosmos \u00b7 ESA \u00b7 JAXA \u00b7 CSA",
+  primaryColor:"#00ff41",
+  crew:[
+    {name:"Sergey Kud-Sverchkov",role:"ISS Commander",flag:"RU",agency:"Roscosmos",vehicle:"Soyuz MS-27",days:198},
+    {name:"Sergei Mikayev",role:"Flight Engineer",flag:"RU",agency:"Roscosmos",vehicle:"Soyuz MS-27",days:198},
+    {name:"Christopher Williams",role:"Flight Engineer",flag:"US",agency:"NASA",vehicle:"Crew-11 ext.",days:242},
+    {name:"Jessica Meir",role:"Crew-12 Commander",flag:"US",agency:"NASA",vehicle:"Crew-12 Dragon",days:50},
+    {name:"Jack Hathaway",role:"Crew-12 Pilot",flag:"US",agency:"NASA",vehicle:"Crew-12 Dragon",days:50},
+    {name:"Sophie Adenot",role:"Mission Specialist",flag:"FR",agency:"ESA",vehicle:"Crew-12 Dragon",days:50},
+    {name:"Andrey Fedyaev",role:"Mission Specialist",flag:"RU",agency:"Roscosmos",vehicle:"Crew-12 Dragon",days:50},
+  ],
+  comms:[
+    {band:"S-Band",freq:"2.0\u20132.3 GHz",use:"Voice / Telemetry / Commanding",rate:"192 kbps"},
+    {band:"Ku-Band",freq:"13.775 GHz",use:"Video / Science downlink",rate:"50 Mbps"},
+    {band:"Ka-Band",freq:"25.5\u201327 GHz",use:"ILLUMA-T / LCRD optical",rate:"1.2 Gbps"},
+    {band:"UHF",freq:"414.2 MHz",use:"EVA suit comms",rate:"4 kbps"},
+    {band:"TDRS",freq:"Multi-band relay",use:"Ground coverage ~80%",rate:"variable"},
+  ],
+  dockingPorts:[
+    {id:"HARMONY-FWD",name:"Harmony Forward (PMA-2)",vehicle:"Crew Dragon Freedom",mission:"Crew-12",status:"OCCUPIED",color:"#00ff41",type:"crew"},
+    {id:"HARMONY-ZEN",name:"Harmony Zenith (IDA-3)",vehicle:null,mission:"",status:"AVAILABLE",color:"#555",type:"crew"},
+    {id:"HARMONY-NAD",name:"Harmony Nadir (PMA-3)",vehicle:null,mission:"",status:"AVAILABLE",color:"#555",type:"crew"},
+    {id:"UNITY-NAD",name:"Unity Nadir",vehicle:"Cygnus XL",mission:"NG-23 (expected Apr 8)",status:"RESERVED",color:"#ffb000",type:"cargo"},
+    {id:"POISK-ZEN",name:"Poisk Zenith",vehicle:"Soyuz MS-27",mission:"Expedition 74",status:"OCCUPIED",color:"#00ff41",type:"crew"},
+    {id:"RASSVET-NAD",name:"Rassvet Nadir",vehicle:"Soyuz MS-28",mission:"Returning Apr 15",status:"OCCUPIED",color:"#00ff41",type:"crew"},
+    {id:"ZVEZDA-AFT",name:"Zvezda Aft",vehicle:"Progress MS-31",mission:"Resupply",status:"OCCUPIED",color:"#ffb000",type:"cargo"},
+    {id:"NAUKA-NAD",name:"Nauka Nadir",vehicle:"Progress MS-30",mission:"Reboost Apr 10",status:"OCCUPIED",color:"#ffb000",type:"cargo"},
+    {id:"PRICHAL-NAD",name:"Prichal Nadir",vehicle:null,mission:"",status:"AVAILABLE",color:"#555",type:"crew"},
+  ],
+  health:{
+    oxygenLevel:"20.9%",co2:"2.8 mmHg",pressure:"101.3 kPa",temperature:"22.1 \u00b0C",humidity:"56%",
+    powerLoad:"142 kW / 215 kW",batterySoC:"87%",thermalLoad:"NOMINAL",
+    radiationDose:"0.12 mSv/day",attitudeControl:"CMG (4/4)",propellant:"72%",waterRecycle:"93%",
+  },
+  ops:{
+    groundControl:"MCC-H Houston / TsUP Moscow / Col-CC Munich / SSIPC Tsukuba",
+    o2System:"OGS Electrolysis + Elektron VM",
+    co2Scrubber:"CDRA (US) + Vozdukh (RU)",
+    waterSystem:"WRS \u2014 93% recycle",
+    exerciseGear:"ARED \u00b7 T2 Treadmill \u00b7 CEVIS",
+    eva:"US EMU \u00b7 Orlan-MKS",
+    roboticArm:"Canadarm2 (17.6m, 7-DOF) + JEMRMS + ERA",
+  },
+};
+
+const TG_DATA = {
+  name:"TIANGONG", fullName:"\u5929\u5BAB Tiangong Space Station", noradId:48274,
+  launched:"2021-04-29T03:23:00Z", launchLabel:"Apr 29, 2021",
+  expedition:"Shenzhou 21", mission:"Shenzhou 21",
+  crewCount:3, partners:1,
+  mass:"~100,000 kg", volume:"340 m\u00b3", modules:3, power:"~100 kW",
+  length:"~55 m", width:"~30 m", arrays:"4 \u00d7 flexible arrays",
+  inclination:41.47, period:91.4, apogee:395, perigee:385, altitude:390,
+  agencies:"CMSA \u2014 China Manned Space Agency",
+  primaryColor:"#ff6b35",
+  crew:[
+    {name:"Zhang Lu \u5F20\u9646",role:"Commander (2nd flight)",flag:"CN",agency:"CMSA",vehicle:"Shenzhou 21",days:154},
+    {name:"Wu Fei \u5434\u98DE",role:"Spaceflight Engineer",flag:"CN",agency:"CAST",vehicle:"Shenzhou 21",days:154},
+    {name:"Zhang Hongzhang \u5F20\u9E3F\u7AE0",role:"Payload Specialist",flag:"CN",agency:"CAS",vehicle:"Shenzhou 21",days:154},
+  ],
+  comms:[
+    {band:"S-Band",freq:"2.0\u20132.3 GHz",use:"TT&C / Voice uplink",rate:"~200 kbps"},
+    {band:"Ka-Band",freq:"~26 GHz",use:"High-rate science",rate:"1.2 Gbps"},
+    {band:"Tianlian",freq:"Multi-band relay",use:"TDRS-equivalent (3 sats)",rate:"variable"},
+    {band:"UHF",freq:"~400 MHz",use:"EVA suit comms",rate:"~4 kbps"},
+    {band:"Laser",freq:"Optical 1550nm",use:"Experimental high-BW",rate:"10+ Gbps"},
+  ],
+  dockingPorts:[
+    {id:"TIANHE-FWD",name:"Tianhe Forward (Axial)",vehicle:"Shenzhou 21",mission:"Crew rotation",status:"OCCUPIED",color:"#ff6b35",type:"crew"},
+    {id:"TIANHE-AFT",name:"Tianhe Aft (Axial)",vehicle:"Tianzhou 9",mission:"Cargo resupply",status:"OCCUPIED",color:"#ffb000",type:"cargo"},
+    {id:"TIANHE-NAD",name:"Tianhe Nadir",vehicle:"Shenzhou 22",mission:"Emergency rescue",status:"OCCUPIED",color:"#ff3333",type:"rescue"},
+    {id:"TIANHE-ZEN",name:"Tianhe Zenith",vehicle:null,mission:"",status:"AVAILABLE",color:"#555",type:"crew"},
+    {id:"WENTIAN-PORT",name:"Wentian Radial (Node)",vehicle:null,mission:"",status:"AVAILABLE",color:"#555",type:"crew"},
+    {id:"MENGTIAN-PORT",name:"Mengtian Radial (Node)",vehicle:null,mission:"",status:"AVAILABLE",color:"#555",type:"crew"},
+  ],
+  health:{
+    oxygenLevel:"21.0%",co2:"3.1 mmHg",pressure:"101.0 kPa",temperature:"23.5 \u00b0C",humidity:"52%",
+    powerLoad:"~68 kW / ~100 kW",batterySoC:"91%",thermalLoad:"NOMINAL",
+    radiationDose:"0.11 mSv/day",attitudeControl:"CMG (6/6)",propellant:"81%",waterRecycle:"~95%",
+  },
+  ops:{
+    groundControl:"BACC Beijing Aerospace Control Center",
+    o2System:"Regenerative ECLSS (electrolysis)",
+    co2Scrubber:"LiOH + regenerative absorber",
+    waterSystem:"~95% closed-loop recycle",
+    exerciseGear:"Treadmill \u00b7 Cycle ergometer \u00b7 Resistive",
+    eva:"Feitian Gen-2 (new 2025)",
+    roboticArm:"CMA 10m 7-DOF (Tianhe) + Wentian arm",
+  },
+};
+
+// ─── LIVE NEWS ──────────────────────────────────────────────────────────
+const NEWS = [
+  {t:"2026-04-04 08:12",s:"NASA",st:"iss",h:"Expedition 74 prepares for Cygnus XL capture with Canadarm2 on Apr 8"},
+  {t:"2026-04-01 18:24",s:"NASA",st:"both",h:"Artemis II launches from KSC Pad 39B \u2014 first crewed lunar mission since 1972"},
+  {t:"2026-04-01 11:41",s:"NASA",st:"iss",h:"Crew trains Canadarm2 robotics ops as Artemis II launch preps continue"},
+  {t:"2026-03-22",s:"Roscosmos",st:"iss",h:"Progress MS-33 successfully launches from Baikonur to resupply ISS"},
+  {t:"2026-03-15",s:"CMSA",st:"tg",h:"Shenzhou 21 crew conducts 3rd EVA to install debris shields on Tianhe"},
+  {t:"2026-02-14",s:"SpaceX",st:"iss",h:"Crew-12 Dragon Freedom docks with ISS at Harmony on Valentine's Day"},
+  {t:"2026-02-13",s:"NASA",st:"iss",h:"Crew-12 launches: Meir, Hathaway, Adenot, Fedyaev head to ISS"},
+  {t:"2025-12-08",s:"CMSA",st:"tg",h:"Shenzhou 21 crew begins first mouse study ever conducted by China in orbit"},
+  {t:"2025-11-25",s:"CMSA",st:"tg",h:"Shenzhou 22 launches as rescue craft after SZ-20 window damage"},
+  {t:"2025-11-01",s:"CMSA",st:"tg",h:"Shenzhou 21 crew arrives at Tiangong \u2014 Zhang Lu, Wu Fei, Zhang Hongzhang"},
+  {t:"2025-10-31",s:"Xinhua",st:"tg",h:"China launches youngest astronaut Wu Fei on Shenzhou 21 mission"},
+];
+
+// ═══════════════════════════════════════════════════════════════════════
+//  MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════════
+function OrbitalCommand() {
+  const [iss, setIss] = useState(null);
+  const [tg, setTg] = useState(null);
+  const [time, setTime] = useState(Date.now());
+  const [tab, setTab] = useState("iss");
+  const [issTrail, setIssTrail] = useState([]);
+  const [tgTrail, setTgTrail] = useState([]);
+  const [apiStatus, setApiStatus] = useState("connecting");
+
+  // ISS fetch
+  const fetchISS = useCallback(function(){
+    fetch("https://api.wheretheiss.at/v1/satellites/25544")
+      .then(function(r){if(!r.ok)throw new Error();return r.json();})
+      .then(function(d){
+        setIss(Object.assign({},d,{live:true}));
+        setApiStatus("online");
+        setIssTrail(function(p){return p.slice(-300).concat([{lat:d.latitude,lon:d.longitude,t:Date.now()}]);});
+      })
+      .catch(function(){
+        setApiStatus("offline");
+        var s=simulateOrbit(Date.now(),51.64,92.68,0);
+        var d={latitude:s.latitude,longitude:s.longitude,altitude:408+Math.random()*5,velocity:27580+Math.random()*40,visibility:Math.random()>0.4?"daylight":"eclipsed",live:false};
+        setIss(d);
+        setIssTrail(function(p){return p.slice(-300).concat([{lat:d.latitude,lon:d.longitude,t:Date.now()}]);});
+      });
+  },[]);
+
+  // Tiangong simulated
+  const updateTG = useCallback(function(){
+    var s=simulateOrbit(Date.now(),41.47,91.4,4800000);
+    var d={latitude:s.latitude,longitude:s.longitude,altitude:388+Math.random()*8,velocity:27640+Math.random()*30,visibility:Math.random()>0.4?"daylight":"eclipsed",live:false};
+    setTg(d);
+    setTgTrail(function(p){return p.slice(-300).concat([{lat:d.latitude,lon:d.longitude,t:Date.now()}]);});
+  },[]);
+
+  useEffect(function(){
+    fetchISS();updateTG();
+    var i=setInterval(function(){fetchISS();updateTG();},4000);
+    return function(){clearInterval(i);};
+  },[fetchISS,updateTG]);
+  useEffect(function(){var i=setInterval(function(){setTime(Date.now());},1000);return function(){clearInterval(i);};},[]);
+
+  // Land dots - memoized
+  const landDots = useMemo(function(){
+    var d=[];
+    for(var la=-58;la<=74;la+=1.6)for(var lo=-178;lo<=178;lo+=1.6)if(isLand(la,lo))d.push({la:la,lo:lo});
+    return d;
+  },[]);
+
+  const elapsed=function(d){var df=time-new Date(d).getTime(),dy=Math.floor(df/864e5),hr=Math.floor((df%864e5)/36e5),mn=Math.floor((df%36e5)/6e4),sc=Math.floor((df%6e4)/1e3);return{dy:dy,hr:hr,mn:mn,sc:sc};};
+  const pad=function(n){return String(n).padStart(2,"0");};
+  const fmtCoord=function(v,p,n){return v!=null?Math.abs(v).toFixed(4)+"\u00b0 "+(v>=0?p:n):"---";};
+
+  const st = tab==="iss" ? ISS_DATA : TG_DATA;
+  const posData = tab==="iss" ? iss : tg;
+  const curE = elapsed(st.launched);
+
+  return (
+    <div style={{minHeight:"100vh",color:"#00ff41",padding:"14px 18px 40px"}}>
+
+      {/* ═══ HEADER ═══ */}
+      <div style={{borderBottom:"1px solid #00ff4133",paddingBottom:12,marginBottom:14}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:12}}>
+          <div>
+            <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:4}}>
+              <span style={{color:"#00ff41",fontSize:9,letterSpacing:3}}>~/orbital-command</span>
+              <span style={{fontSize:9,color:"#00ff4144"}}>$</span>
+              <span style={{fontSize:9,color:"#00ff4188",animation:"blink 1.2s infinite"}}>_</span>
+            </div>
+            <h1 style={{fontSize:28,fontWeight:900,letterSpacing:6,lineHeight:1,margin:0,textShadow:"0 0 20px #00ff4144"}}>
+              ORBITAL COMMAND
+            </h1>
+            <div style={{fontSize:10,color:"#00ff4177",letterSpacing:3,marginTop:5}}>
+              DUAL STATION REAL-TIME TRACKER {"\u00b7"} ISS + TIANGONG {"\u00b7"} TACTICAL MONITORING
+            </div>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:9,color:"#00ff4155",letterSpacing:2}}>UTC MISSION TIME</div>
+            <div style={{fontSize:22,fontWeight:800,color:"#00ff41",letterSpacing:3,lineHeight:1,textShadow:"0 0 10px #00ff4166"}}>
+              {new Date(time).toISOString().slice(11,19)}
+            </div>
+            <div style={{fontSize:9,color:"#00ff4166",letterSpacing:2,marginTop:3}}>
+              {new Date(time).toISOString().slice(0,10)} {"\u00b7"} JD {(2460000+Math.floor((time-new Date("2023-02-24").getTime())/86400000)).toFixed(0)}
+            </div>
+          </div>
+        </div>
+
+        {/* Status strip */}
+        <div style={{display:"flex",alignItems:"center",gap:14,marginTop:12,fontSize:9,flexWrap:"wrap"}}>
+          <div style={{display:"flex",alignItems:"center",gap:5}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:apiStatus==="online"?"#00ff41":"#ff6b35",boxShadow:"0 0 6px currentColor",animation:"blink 2s infinite",display:"inline-block"}}/>
+            <span style={{color:apiStatus==="online"?"#00ff41":"#ff6b35",letterSpacing:2}}>
+              {apiStatus==="online"?"ISS API LIVE":"ISS API OFFLINE"}
+            </span>
+          </div>
+          <div style={{color:"#00ff4144"}}>{"\u2502"}</div>
+          <div style={{color:"#ff6b35",letterSpacing:2,display:"flex",alignItems:"center",gap:5}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:"#ff6b35",boxShadow:"0 0 6px #ff6b35",display:"inline-block"}}/>
+            TIANGONG SIMULATED
+          </div>
+          <div style={{color:"#00ff4144"}}>{"\u2502"}</div>
+          <div style={{color:"#00ff41aa",letterSpacing:2}}>
+            HUMANS IN ORBIT: <span style={{color:"#00ff41",fontWeight:700}}>7</span> + <span style={{color:"#ff6b35",fontWeight:700}}>3</span> = <span style={{color:"#fff",fontWeight:700}}>10</span>
+          </div>
+          <div style={{color:"#00ff4144"}}>{"\u2502"}</div>
+          <div style={{color:"#00ff4188",letterSpacing:2}}>UPDATE: 4.0s</div>
+        </div>
+      </div>
+
+      {/* ═══ STATION TABS ═══ */}
+      <div style={{display:"flex",gap:2,marginBottom:14,borderBottom:"1px solid #00ff4133"}}>
+        {[
+          {id:"iss",label:"ISS",sub:"Expedition 74 \u00b7 7 crew",color:"#00ff41"},
+          {id:"tg",label:"TIANGONG \u5929\u5BAB",sub:"Shenzhou 21 \u00b7 3 crew",color:"#ff6b35"},
+        ].map(function(t){
+          const active = tab===t.id;
+          return (
+            <button key={t.id} className="btn" onClick={function(){setTab(t.id);}} style={{
+              flex:1,background:active?t.color+"15":"transparent",
+              border:"1px solid "+(active?t.color:t.color+"22"),borderBottom:active?"1px solid "+t.color:"1px solid transparent",
+              padding:"12px 18px",textAlign:"left",color:active?t.color:t.color+"77",
+              position:"relative",
+            }}>
+              <div style={{fontSize:15,fontWeight:800,letterSpacing:3,marginBottom:3}}>
+                <span style={{animation:active?"blink 1.5s infinite":"none",fontSize:8,marginRight:6}}>{"\u25B6"}</span>
+                {t.label}
+              </div>
+              <div style={{fontSize:9,letterSpacing:2,opacity:.7}}>{t.sub}</div>
+              {active && <div style={{position:"absolute",top:0,left:0,right:0,height:2,background:t.color,boxShadow:"0 0 8px "+t.color}}/>}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ═══ MISSION CLOCK BAR ═══ */}
+      <div style={{border:"1px solid "+st.primaryColor+"33",background:"linear-gradient(90deg,"+st.primaryColor+"08 0%,transparent 100%)",padding:"12px 16px",marginBottom:14,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:12}}>
+        <div>
+          <div style={{fontSize:8,letterSpacing:3,color:st.primaryColor+"88",marginBottom:2}}>{"\u25B8"} MISSION ELAPSED TIME</div>
+          <div style={{fontSize:9,color:st.primaryColor+"66",letterSpacing:1.5}}>since {st.launchLabel}</div>
+        </div>
+        <div style={{display:"flex",gap:16,alignItems:"flex-end"}}>
+          {[[curE.dy,"DAYS"],[pad(curE.hr),"HRS"],[pad(curE.mn),"MIN"],[pad(curE.sc),"SEC"]].map(function(x,i){return (
+            <div key={i} style={{textAlign:"center"}}>
+              <div style={{fontSize:28,fontWeight:800,color:st.primaryColor,letterSpacing:2,lineHeight:1,fontVariantNumeric:"tabular-nums",textShadow:"0 0 12px "+st.primaryColor+"66"}}>{x[0]}</div>
+              <div style={{fontSize:7,letterSpacing:2,color:st.primaryColor+"55",marginTop:2}}>{x[1]}</div>
+            </div>
+          );})}
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:8,letterSpacing:2,color:st.primaryColor+"88",marginBottom:2}}>{"\u25B8"} STATUS</div>
+          <div style={{fontSize:14,fontWeight:700,color:st.primaryColor,letterSpacing:2}}>NOMINAL OPERATIONS</div>
+        </div>
+      </div>
+
+      {/* ═══ METRICS GRID ═══ */}
+      <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8,marginBottom:14}}>
+        <Metric label="LATITUDE" value={fmtCoord(posData?posData.latitude:null,"N","S")} color={st.primaryColor}/>
+        <Metric label="LONGITUDE" value={fmtCoord(posData?posData.longitude:null,"E","W")} color={st.primaryColor}/>
+        <Metric label="ALTITUDE" value={posData?posData.altitude.toFixed(1)+" km":"---"} sub={"nominal: "+st.altitude+" km"} color={st.primaryColor}/>
+        <Metric label="VELOCITY" value={posData?posData.velocity.toFixed(0)+" km/h":"---"} sub="orbital speed" color={st.primaryColor}/>
+        <Metric label="INCLINATION" value={st.inclination+"\u00b0"} sub="relative to equator" color={st.primaryColor}/>
+        <Metric label="ORBITAL PERIOD" value={st.period+" min"} sub="~15.5 orbits/day" color={st.primaryColor}/>
+        <Metric label="APOGEE" value={st.apogee+" km"} sub="farthest point" color={st.primaryColor}/>
+        <Metric label="PERIGEE" value={st.perigee+" km"} sub="closest point" color={st.primaryColor}/>
+      </div>
+
+      {/* ═══ TRAJECTORY VISUALIZATION (LARGE MAP) ═══ */}
+      <Section title={"\u25B8 TRAJECTORY VISUALIZATION"} subtitle="2D GROUND TRACK \u00b7 MERCATOR PROJECTION" color={st.primaryColor}>
+        <div style={{border:"1px solid "+st.primaryColor+"33",background:"#000",padding:2,position:"relative"}}>
+          <svg viewBox="0 0 1440 720" style={{width:"100%",display:"block"}}>
+            <defs>
+              <pattern id="grid-bg" width="72" height="72" patternUnits="userSpaceOnUse">
+                <path d="M72 0L0 0 0 72" fill="none" stroke="#00ff4108" strokeWidth="0.5"/>
+              </pattern>
+              <radialGradient id="glow-iss" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#00ff41" stopOpacity="0.4"/>
+                <stop offset="100%" stopColor="#00ff41" stopOpacity="0"/>
+              </radialGradient>
+              <radialGradient id="glow-tg" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#ff6b35" stopOpacity="0.4"/>
+                <stop offset="100%" stopColor="#ff6b35" stopOpacity="0"/>
+              </radialGradient>
+            </defs>
+            <rect width="1440" height="720" fill="#000"/>
+            <rect width="1440" height="720" fill="url(#grid-bg)"/>
+
+            {/* Lat/lon grid */}
+            {[-75,-60,-45,-30,-15,0,15,30,45,60,75].map(function(la){return (
+              <g key={"la"+la}>
+                <line x1="0" y1={((90-la)/180)*720} x2="1440" y2={((90-la)/180)*720} stroke="#00ff4110" strokeWidth="0.5" strokeDasharray={la===0?"none":"4,6"}/>
+                <text x="6" y={((90-la)/180)*720-3} fill="#00ff4133" fontSize="9" fontFamily="monospace">{la>0?"+":""}{la}{"\u00b0"}</text>
+              </g>
+            );})}
+            {[-150,-120,-90,-60,-30,0,30,60,90,120,150].map(function(lo){return (
+              <g key={"lo"+lo}>
+                <line x1={((lo+180)/360)*1440} y1="0" x2={((lo+180)/360)*1440} y2="720" stroke="#00ff4110" strokeWidth="0.5" strokeDasharray={lo===0?"none":"4,6"}/>
+                <text x={((lo+180)/360)*1440+3} y="714" fill="#00ff4133" fontSize="9" fontFamily="monospace">{lo>0?"+":""}{lo}{"\u00b0"}</text>
+              </g>
+            );})}
+
+            {/* Land dots */}
+            {landDots.map(function(d){return <rect key={d.la+","+d.lo} x={((d.lo+180)/360)*1440-0.9} y={((90-d.la)/180)*720-0.9} width="1.8" height="1.8" fill="#00ff4128"/>;})}
+
+            {/* Inclination bands */}
+            <rect x="0" y={((90-51.64)/180)*720} width="1440" height={((90-(-51.64))/180)*720-((90-51.64)/180)*720} fill="#00ff4103" stroke="#00ff4118" strokeWidth="0.5" strokeDasharray="3,6"/>
+            <rect x="0" y={((90-41.47)/180)*720} width="1440" height={((90-(-41.47))/180)*720-((90-41.47)/180)*720} fill="#ff6b3503" stroke="#ff6b3518" strokeWidth="0.5" strokeDasharray="3,6"/>
+
+            {/* ISS trail */}
+            {issTrail.map(function(p,i){if(!i)return null;const q=issTrail[i-1];if(Math.abs(p.lon-q.lon)>100)return null;return (
+              <line key={"it"+i} x1={((q.lon+180)/360)*1440} y1={((90-q.lat)/180)*720} x2={((p.lon+180)/360)*1440} y2={((90-p.lat)/180)*720} stroke="#00ff41" strokeWidth="1.2" opacity={0.15+(i/issTrail.length)*0.6}/>
+            );}).filter(Boolean)}
+
+            {/* TG trail */}
+            {tgTrail.map(function(p,i){if(!i)return null;const q=tgTrail[i-1];if(Math.abs(p.lon-q.lon)>100)return null;return (
+              <line key={"tt"+i} x1={((q.lon+180)/360)*1440} y1={((90-q.lat)/180)*720} x2={((p.lon+180)/360)*1440} y2={((90-p.lat)/180)*720} stroke="#ff6b35" strokeWidth="1.2" opacity={0.15+(i/tgTrail.length)*0.6}/>
+            );}).filter(Boolean)}
+
+            {/* ISS marker */}
+            {iss && (
+              <g>
+                <circle cx={((iss.longitude+180)/360)*1440} cy={((90-iss.latitude)/180)*720} r="40" fill="url(#glow-iss)">
+                  <animate attributeName="r" values="30;50;30" dur="2.5s" repeatCount="indefinite"/>
+                </circle>
+                <circle cx={((iss.longitude+180)/360)*1440} cy={((90-iss.latitude)/180)*720} r="6" fill="#00ff41" stroke="#00ff41" strokeWidth="1">
+                  <animate attributeName="r" values="5;8;5" dur="2s" repeatCount="indefinite"/>
+                </circle>
+                <text x={((iss.longitude+180)/360)*1440+12} y={((90-iss.latitude)/180)*720-10} fill="#00ff41" fontSize="13" fontWeight="bold" fontFamily="monospace">ISS</text>
+                <text x={((iss.longitude+180)/360)*1440+12} y={((90-iss.latitude)/180)*720+5} fill="#00ff4199" fontSize="9" fontFamily="monospace">{iss.altitude.toFixed(0)+"km \u00b7 "+iss.velocity.toFixed(0)+"km/h"}</text>
+                <text x={((iss.longitude+180)/360)*1440+12} y={((90-iss.latitude)/180)*720+18} fill="#00ff4166" fontSize="8" fontFamily="monospace">{(iss.visibility||"").toUpperCase()}</text>
+              </g>
+            )}
+
+            {/* TG marker */}
+            {tg && (
+              <g>
+                <circle cx={((tg.longitude+180)/360)*1440} cy={((90-tg.latitude)/180)*720} r="40" fill="url(#glow-tg)">
+                  <animate attributeName="r" values="30;50;30" dur="2.5s" repeatCount="indefinite"/>
+                </circle>
+                <circle cx={((tg.longitude+180)/360)*1440} cy={((90-tg.latitude)/180)*720} r="6" fill="#ff6b35" stroke="#ff6b35" strokeWidth="1">
+                  <animate attributeName="r" values="5;8;5" dur="2s" repeatCount="indefinite"/>
+                </circle>
+                <text x={((tg.longitude+180)/360)*1440+12} y={((90-tg.latitude)/180)*720-10} fill="#ff6b35" fontSize="13" fontWeight="bold" fontFamily="monospace">{"\u5929\u5BAB CSS"}</text>
+                <text x={((tg.longitude+180)/360)*1440+12} y={((90-tg.latitude)/180)*720+5} fill="#ff6b3599" fontSize="9" fontFamily="monospace">{tg.altitude.toFixed(0)+"km \u00b7 "+tg.velocity.toFixed(0)+"km/h"}</text>
+                <text x={((tg.longitude+180)/360)*1440+12} y={((90-tg.latitude)/180)*720+18} fill="#ff6b3566" fontSize="8" fontFamily="monospace">{(tg.visibility||"").toUpperCase()}</text>
+              </g>
+            )}
+
+            {/* Legend box */}
+            <rect x="14" y="14" width="260" height="72" fill="#000000cc" stroke="#00ff4133" strokeWidth="1"/>
+            <text x="22" y="30" fill="#00ff4188" fontSize="8" fontFamily="monospace" letterSpacing="1.5">{"\u25B8 TRACKING LEGEND"}</text>
+            <circle cx="28" cy="48" r="4" fill="#00ff41"/>
+            <text x="38" y="51" fill="#00ff41" fontSize="10" fontFamily="monospace">{"ISS 25544 \u00b7 51.6\u00b0 incl \u00b7 "+(iss?iss.altitude.toFixed(0):"---")+"km"}</text>
+            <circle cx="28" cy="66" r="4" fill="#ff6b35"/>
+            <text x="38" y="69" fill="#ff6b35" fontSize="10" fontFamily="monospace">{"\u5929\u5BAB 48274 \u00b7 41.5\u00b0 incl \u00b7 "+(tg?tg.altitude.toFixed(0):"---")+"km"}</text>
+            <text x="22" y="82" fill="#00ff4155" fontSize="7" fontFamily="monospace">{"DASHED BANDS: ORBITAL INCLINATION LIMITS"}</text>
+          </svg>
+        </div>
+      </Section>
+
+      {/* ═══ STATION DIAGRAM (SELECTED TAB ONLY) ═══ */}
+      {tab==="iss" ? (
+        <Section title={"\u25B8 "+ISS_DATA.name+" MODULE LAYOUT"} subtitle={"16 PRESSURIZED MODULES \u00b7 "+ISS_DATA.length+" \u00d7 "+ISS_DATA.width+" \u00b7 "+ISS_DATA.mass} color="#00ff41">
+          <ISSModuleDiagram dockingPorts={ISS_DATA.dockingPorts}/>
+        </Section>
+      ) : (
+        <Section title={"\u25B8 "+TG_DATA.name+" MODULE LAYOUT"} subtitle={"3 MODULES \u00b7 "+TG_DATA.length+" \u00d7 "+TG_DATA.width+" \u00b7 "+TG_DATA.mass} color="#ff6b35">
+          <TiangongModuleDiagram dockingPorts={TG_DATA.dockingPorts}/>
+        </Section>
+      )}
+
+      {/* ═══ DOCKING PORTS STATUS ═══ */}
+      <Section title={"\u25B8 "+st.name+" DOCKING PORT STATUS"} subtitle={"REAL-TIME OCCUPANCY \u00b7 "+st.dockingPorts.filter(function(d){return d.status==="OCCUPIED";}).length+"/"+st.dockingPorts.length+" OCCUPIED"} color={st.primaryColor}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:6}}>
+          {st.dockingPorts.map(function(p,i){return (
+            <div key={i} style={{border:"1px solid "+p.color+"33",background:p.color+"05",padding:"8px 10px",borderLeft:"3px solid "+p.color}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:3}}>
+                <div style={{fontSize:9,color:p.color,fontWeight:700,letterSpacing:1.5}}>{p.id}</div>
+                <div style={{fontSize:7,color:p.color,letterSpacing:1.5,padding:"1px 5px",border:"1px solid "+p.color+"55",background:p.color+"12"}}>{p.status}</div>
+              </div>
+              <div style={{fontSize:8,color:"#999",marginBottom:3}}>{p.name}</div>
+              {p.vehicle ? (
+                <>
+                  <div style={{fontSize:10,color:"#ccc",fontWeight:600}}>{p.vehicle}</div>
+                  <div style={{fontSize:8,color:"#666",marginTop:1}}>{p.mission} {"\u00b7"} {p.type.toUpperCase()}</div>
+                </>
+              ) : (
+                <div style={{fontSize:9,color:"#555",fontStyle:"italic"}}>{"\u2014 port available \u2014"}</div>
+              )}
+            </div>
+          );})}
+        </div>
+      </Section>
+
+      {/* ═══ STATION HEALTH & TELEMETRY ═══ */}
+      <Section title={"\u25B8 "+st.name+" HEALTH & SYSTEMS TELEMETRY"} subtitle="LIFE SUPPORT \u00b7 POWER \u00b7 THERMAL \u00b7 RADIATION" color={st.primaryColor}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <div>
+            <HealthHeader color={st.primaryColor}>LIFE SUPPORT (ECLSS)</HealthHeader>
+            <HealthRow l="Oxygen (O\u2082)" v={st.health.oxygenLevel} p={99} c={st.primaryColor}/>
+            <HealthRow l="CO\u2082 Partial Press." v={st.health.co2} p={70} c="#ffb000"/>
+            <HealthRow l="Cabin Pressure" v={st.health.pressure} p={100} c={st.primaryColor}/>
+            <HealthRow l="Temperature" v={st.health.temperature} p={75} c={st.primaryColor}/>
+            <HealthRow l="Humidity" v={st.health.humidity} p={60} c={st.primaryColor}/>
+            <HealthRow l="Water Recycle" v={st.health.waterRecycle} p={93} c={st.primaryColor}/>
+          </div>
+          <div>
+            <HealthHeader color={st.primaryColor}>POWER / THERMAL / NAVIGATION</HealthHeader>
+            <HealthRow l="Power Load" v={st.health.powerLoad} p={66} c={st.primaryColor}/>
+            <HealthRow l="Battery SoC" v={st.health.batterySoC} p={parseInt(st.health.batterySoC)} c={st.primaryColor}/>
+            <HealthRow l="Thermal Load" v={st.health.thermalLoad} p={80} c={st.primaryColor}/>
+            <HealthRow l="Radiation Dose" v={st.health.radiationDose} p={25} c={st.primaryColor}/>
+            <HealthRow l="Attitude Ctrl (CMG)" v={st.health.attitudeControl} p={100} c={st.primaryColor}/>
+            <HealthRow l="Propellant" v={st.health.propellant} p={parseInt(st.health.propellant)} c={st.primaryColor}/>
+          </div>
+        </div>
+      </Section>
+
+      {/* ═══ CREW ═══ */}
+      <Section title={"\u25B8 "+st.name+" CREW "+"\u2014 "+st.mission} subtitle={st.crewCount+" ASTRONAUTS IN ORBIT \u00b7 "+st.agencies} color={st.primaryColor}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(260px,1fr))",gap:6}}>
+          {st.crew.map(function(c,i){return (
+            <div key={i} style={{border:"1px solid "+st.primaryColor+"22",background:st.primaryColor+"06",padding:"8px 10px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start"}}>
+                <div>
+                  <div style={{fontSize:11,fontWeight:700,color:st.primaryColor,letterSpacing:1}}>
+                    <span style={{fontSize:9,marginRight:5,padding:"1px 4px",border:"1px solid "+st.primaryColor+"55",background:st.primaryColor+"12",letterSpacing:1}}>{c.flag}</span>
+                    {c.name}
+                  </div>
+                  <div style={{fontSize:8,color:"#999",marginTop:2}}>{c.role}</div>
+                </div>
+                <div style={{textAlign:"right"}}>
+                  <div style={{fontSize:14,fontWeight:700,color:st.primaryColor,lineHeight:1}}>{c.days}</div>
+                  <div style={{fontSize:6,color:st.primaryColor+"66",letterSpacing:1.5}}>DAYS</div>
+                </div>
+              </div>
+              <div style={{fontSize:7,color:"#555",marginTop:4,letterSpacing:1}}>
+                {c.agency} {"\u00b7"} {c.vehicle}
+              </div>
+            </div>
+          );})}
+        </div>
+      </Section>
+
+      {/* ═══ COMMS + OPERATIONS ═══ */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:14}}>
+        <Section title={"\u25B8 COMMUNICATIONS & FREQUENCIES"} subtitle="GROUND LINK + RELAY SATELLITES" color={st.primaryColor} noMargin>
+          {st.comms.map(function(c,i){return (
+            <div key={i} style={{padding:"7px 9px",borderLeft:"2px solid "+st.primaryColor+"55",background:st.primaryColor+"06",marginBottom:4}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div style={{fontSize:11,fontWeight:700,color:st.primaryColor,letterSpacing:1}}>{c.band}</div>
+                <div style={{fontSize:9,color:st.primaryColor+"88"}}>{c.freq}</div>
+              </div>
+              <div style={{display:"flex",justifyContent:"space-between",fontSize:8,marginTop:2}}>
+                <span style={{color:"#888"}}>{c.use}</span>
+                <span style={{color:st.primaryColor+"77"}}>{c.rate}</span>
+              </div>
+            </div>
+          );})}
+        </Section>
+        <Section title={"\u25B8 "+st.name+" OPERATIONS"} subtitle="GROUND CONTROL & SUBSYSTEMS" color={st.primaryColor} noMargin>
+          {[
+            ["Ground Control",st.ops.groundControl],
+            ["O\u2082 System",st.ops.o2System],
+            ["CO\u2082 Scrubber",st.ops.co2Scrubber],
+            ["Water System",st.ops.waterSystem],
+            ["Exercise Gear",st.ops.exerciseGear],
+            ["EVA Suits",st.ops.eva],
+            ["Robotic Arm",st.ops.roboticArm],
+          ].map(function(r,i){return (
+            <div key={i} style={{display:"flex",justifyContent:"space-between",padding:"5px 0",borderBottom:"1px solid "+st.primaryColor+"12",gap:12}}>
+              <span style={{color:"#666",fontSize:9,letterSpacing:1,minWidth:100}}>{r[0]}</span>
+              <span style={{color:"#ccc",fontSize:9,textAlign:"right",flex:1}}>{r[1]}</span>
+            </div>
+          );})}
+        </Section>
+      </div>
+
+      {/* ═══ COMPARISON + NEWS ═══ */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1.5fr",gap:12,marginBottom:14}}>
+        <Section title={"\u25B8 STATION COMPARISON"} subtitle="ISS vs TIANGONG" color="#00ff41" noMargin>
+          <div style={{fontSize:9}}>
+            <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr",gap:4,padding:"6px 4px",background:"#00ff4108",fontWeight:700,color:"#fff",borderBottom:"1px solid #00ff4133",letterSpacing:1}}>
+              <span>PARAMETER</span>
+              <span style={{textAlign:"center",color:"#00ff41"}}>ISS</span>
+              <span style={{textAlign:"center",color:"#ff6b35"}}>TIANGONG</span>
+            </div>
+            {[
+              ["Mass","420 t","100 t"],
+              ["Pressurized Volume","916 m\u00b3","340 m\u00b3"],
+              ["Modules","16","3 (+telescope)"],
+              ["Max Crew","7","3"],
+              ["Power","215 kW","100 kW"],
+              ["Length","109 m","~55 m"],
+              ["Inclination","51.6\u00b0","41.5\u00b0"],
+              ["Altitude","~408 km","~390 km"],
+              ["Partners","5 agencies","China only"],
+              ["Continuous Crew","Nov 2000","Jun 2022"],
+              ["End-of-Life","~2030","~2035+"],
+              ["Budget / year","~$3.5B","~$2B (est)"],
+            ].map(function(r,i){return (
+              <div key={i} style={{display:"grid",gridTemplateColumns:"1.5fr 1fr 1fr",gap:4,padding:"5px 4px",borderBottom:"1px solid #ffffff08"}}>
+                <span style={{color:"#888"}}>{r[0]}</span>
+                <span style={{color:"#00ff41aa",textAlign:"center"}}>{r[1]}</span>
+                <span style={{color:"#ff6b35aa",textAlign:"center"}}>{r[2]}</span>
+              </div>
+            );})}
+          </div>
+        </Section>
+
+        <Section title={"\u25B8 LIVE NEWS FEED"} subtitle="ISS \u00b7 TIANGONG \u00b7 SPACE OPS" color="#ffb000" noMargin>
+          <div style={{maxHeight:420,overflow:"auto"}}>
+            {NEWS.map(function(n,i){
+              const tagColor = n.st==="iss"?"#00ff41":n.st==="tg"?"#ff6b35":"#ffb000";
+              const tagLabel = n.st==="iss"?"ISS":n.st==="tg"?"TG":"ALL";
+              return (
+                <div key={i} style={{padding:"7px 9px",borderLeft:"2px solid #ffb00055",background:"#ffb00005",marginBottom:4}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+                    <div style={{fontSize:7,color:"#ffb00099",letterSpacing:1}}>{n.t} {"\u00b7"} {n.s}</div>
+                    <div style={{fontSize:6,color:tagColor,padding:"1px 4px",border:"1px solid "+tagColor+"55",letterSpacing:1,fontWeight:700}}>{tagLabel}</div>
+                  </div>
+                  <div style={{color:"#ddd",fontSize:10,lineHeight:1.35}}>{n.h}</div>
+                </div>
+              );
+            })}
+          </div>
+        </Section>
+      </div>
+
+      {/* ═══ FOOTER ═══ */}
+      <div style={{borderTop:"1px solid #00ff4122",paddingTop:10,marginTop:18,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,fontSize:8,color:"#00ff4144",letterSpacing:1.5}}>
+        <div>ORBITAL COMMAND v4.0 {"\u00b7"} built with React + SVG {"\u00b7"} no external deps after init</div>
+        <div>ISS data: wheretheiss.at API {"\u00b7"} Tiangong: simulated (CMSA does not publish live TLE)</div>
+        <div>Crew data: NASA / CMSA {"\u00b7"} Updated Apr 2026</div>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SUB-COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════
+function Section(props){
+  return (
+    <div style={{marginBottom:props.noMargin?0:14}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:6,paddingBottom:5,borderBottom:"1px solid "+props.color+"22"}}>
+        <div style={{fontSize:10,fontWeight:700,color:props.color,letterSpacing:3}}>{props.title}</div>
+        {props.subtitle && <div style={{fontSize:8,color:props.color+"77",letterSpacing:2}}>{props.subtitle}</div>}
+      </div>
+      {props.children}
+    </div>
+  );
+}
+
+function Metric(props){
+  return (
+    <div style={{border:"1px solid "+props.color+"22",background:props.color+"06",padding:"8px 10px"}}>
+      <div style={{fontSize:7,color:"#666",letterSpacing:2,marginBottom:3}}>{props.label}</div>
+      <div style={{fontSize:15,fontWeight:700,color:props.color,letterSpacing:1,lineHeight:1}}>{props.value}</div>
+      {props.sub && <div style={{fontSize:7,color:props.color+"55",letterSpacing:1,marginTop:3}}>{props.sub}</div>}
+    </div>
+  );
+}
+
+function HealthHeader(props){
+  return <div style={{fontSize:8,color:props.color,letterSpacing:2,marginBottom:6,fontWeight:700}}>{"\u25B8 "}{props.children}</div>;
+}
+
+function HealthRow(props){
+  return (
+    <div style={{marginBottom:6}}>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:9,marginBottom:2}}>
+        <span style={{color:"#888",letterSpacing:1}}>{props.l}</span>
+        <span style={{color:props.c,fontWeight:600}}>{props.v}</span>
+      </div>
+      <div style={{height:3,background:"#00ff4108",position:"relative"}}>
+        <div style={{position:"absolute",top:0,left:0,height:"100%",width:props.p+"%",background:props.c,boxShadow:"0 0 4px "+props.c}}/>
+      </div>
+    </div>
+  );
+}
+
+// ─── ISS MODULE DIAGRAM ────────────────────────────────────────────────
+function ISSModuleDiagram({dockingPorts}){
+  // Lookup docked vehicles
+  const dock = {};
+  dockingPorts.forEach(function(p){dock[p.id]=p;});
+  const portColor = function(id){const p=dock[id];return p && p.status==="OCCUPIED" ? p.color : "#333";};
+  const portLabel = function(id){const p=dock[id];return p && p.vehicle ? p.vehicle : "";};
+
+  return (
+    <div style={{border:"1px solid #00ff4133",background:"#000",padding:14,position:"relative"}}>
+      <svg viewBox="0 0 1400 420" style={{width:"100%",display:"block"}}>
+        {/* Solar array pairs - P6, P4, S4, S6 */}
+        {[[20,170],[260,170],[1000,170],[1240,170]].map(function(arr,i){return (
+          <g key={"sa"+i}>
+            <rect x={arr[0]} y={arr[1]-42} width="140" height="36" fill="#00ff410a" stroke="#00ff4155" strokeWidth="0.8"/>
+            <rect x={arr[0]} y={arr[1]+6} width="140" height="36" fill="#00ff410a" stroke="#00ff4155" strokeWidth="0.8"/>
+            {[0,1,2,3,4,5,6].map(function(k){return <line key={k} x1={arr[0]+20*(k+1)} y1={arr[1]-42} x2={arr[0]+20*(k+1)} y2={arr[1]+42} stroke="#00ff4133" strokeWidth="0.4"/>;})}
+            <text x={arr[0]+70} y={arr[1]+60} fill="#00ff4155" fontSize="9" textAnchor="middle" fontFamily="monospace">{["P6","P4","S4","S6"][i]} SOLAR ARRAY</text>
+          </g>
+        );})}
+
+        {/* Integrated Truss */}
+        <rect x="160" y="192" width="1080" height="16" fill="#00ff4112" stroke="#00ff4166" strokeWidth="1"/>
+        <text x="700" y="186" fill="#00ff4166" fontSize="10" textAnchor="middle" fontFamily="monospace" letterSpacing="2">INTEGRATED TRUSS STRUCTURE (ITS) {"\u00b7"} 109m</text>
+        {[0,1,2,3,4,5,6,7,8,9].map(function(i){return <line key={"tl"+i} x1={200+i*105} y1="192" x2={200+i*105} y2="208" stroke="#00ff4144" strokeWidth="0.5"/>;})}
+
+        {/* ━━━ Russian Segment (left) ━━━ */}
+        {/* Zvezda */}
+        <rect x="400" y="220" width="90" height="52" fill="#00ff4112" stroke="#00ff4188" strokeWidth="1.2" rx="2"/>
+        <text x="445" y="242" fill="#00ff41" fontSize="10" textAnchor="middle" fontWeight="bold" fontFamily="monospace">ZVEZDA</text>
+        <text x="445" y="254" fill="#00ff4177" fontSize="7" textAnchor="middle" fontFamily="monospace">Service Mod</text>
+        <text x="445" y="265" fill="#00ff4155" fontSize="7" textAnchor="middle" fontFamily="monospace">2000</text>
+
+        {/* Zvezda Aft port (Progress) */}
+        <rect x="360" y="238" width="40" height="16" fill={portColor("ZVEZDA-AFT")+"22"} stroke={portColor("ZVEZDA-AFT")} strokeWidth="0.8"/>
+        <text x="380" y="249" fill={portColor("ZVEZDA-AFT")} fontSize="7" textAnchor="middle" fontFamily="monospace">AFT</text>
+        {dock["ZVEZDA-AFT"] && dock["ZVEZDA-AFT"].status==="OCCUPIED" && (
+          <g>
+            <rect x="290" y="234" width="70" height="24" fill="#ffb00015" stroke="#ffb000" strokeWidth="0.8" rx="2"/>
+            <text x="325" y="244" fill="#ffb000" fontSize="7" textAnchor="middle" fontFamily="monospace" fontWeight="bold">PROGRESS</text>
+            <text x="325" y="253" fill="#ffb000aa" fontSize="6" textAnchor="middle" fontFamily="monospace">MS-31 cargo</text>
+          </g>
+        )}
+
+        {/* Zarya */}
+        <rect x="490" y="220" width="80" height="52" fill="#00ff4112" stroke="#00ff4188" strokeWidth="1.2" rx="2"/>
+        <text x="530" y="242" fill="#00ff41" fontSize="10" textAnchor="middle" fontWeight="bold" fontFamily="monospace">ZARYA</text>
+        <text x="530" y="254" fill="#00ff4177" fontSize="7" textAnchor="middle" fontFamily="monospace">FGB</text>
+        <text x="530" y="265" fill="#00ff4155" fontSize="7" textAnchor="middle" fontFamily="monospace">1998</text>
+
+        {/* Nauka (below Zvezda) */}
+        <rect x="405" y="285" width="80" height="40" fill="#00ff4110" stroke="#00ff4177" strokeWidth="1" rx="2"/>
+        <text x="445" y="302" fill="#00ff41" fontSize="9" textAnchor="middle" fontWeight="bold" fontFamily="monospace">NAUKA</text>
+        <text x="445" y="314" fill="#00ff4166" fontSize="6" textAnchor="middle" fontFamily="monospace">MLM 2021</text>
+        <line x1="445" y1="272" x2="445" y2="285" stroke="#00ff4144" strokeWidth="1"/>
+        {/* Nauka nadir port */}
+        <rect x="422" y="325" width="46" height="14" fill={portColor("NAUKA-NAD")+"22"} stroke={portColor("NAUKA-NAD")} strokeWidth="0.8"/>
+        <text x="445" y="335" fill={portColor("NAUKA-NAD")} fontSize="6" textAnchor="middle" fontFamily="monospace">NADIR</text>
+        {dock["NAUKA-NAD"] && dock["NAUKA-NAD"].status==="OCCUPIED" && (
+          <g>
+            <rect x="410" y="342" width="70" height="22" fill="#ffb00015" stroke="#ffb000" strokeWidth="0.8" rx="2"/>
+            <text x="445" y="352" fill="#ffb000" fontSize="7" textAnchor="middle" fontFamily="monospace" fontWeight="bold">PROGRESS</text>
+            <text x="445" y="361" fill="#ffb000aa" fontSize="6" textAnchor="middle" fontFamily="monospace">MS-30</text>
+          </g>
+        )}
+
+        {/* Poisk (above Zvezda) */}
+        <rect x="418" y="167" width="54" height="28" fill="#00ff4110" stroke="#00ff4177" strokeWidth="1" rx="2"/>
+        <text x="445" y="183" fill="#00ff41" fontSize="8" textAnchor="middle" fontFamily="monospace">POISK</text>
+        <text x="445" y="192" fill="#00ff4155" fontSize="6" textAnchor="middle" fontFamily="monospace">MRM-2</text>
+        <line x1="445" y1="195" x2="445" y2="220" stroke="#00ff4144" strokeWidth="1"/>
+        {/* Poisk zenith (Soyuz MS-27) */}
+        <rect x="420" y="147" width="50" height="18" fill={portColor("POISK-ZEN")+"22"} stroke={portColor("POISK-ZEN")} strokeWidth="0.8"/>
+        <text x="445" y="159" fill={portColor("POISK-ZEN")} fontSize="7" textAnchor="middle" fontFamily="monospace">ZENITH</text>
+        {dock["POISK-ZEN"] && dock["POISK-ZEN"].status==="OCCUPIED" && (
+          <g>
+            <rect x="412" y="118" width="66" height="28" fill="#00ff4118" stroke="#00ff41" strokeWidth="1" rx="2"/>
+            <text x="445" y="130" fill="#00ff41" fontSize="8" textAnchor="middle" fontFamily="monospace" fontWeight="bold">SOYUZ</text>
+            <text x="445" y="140" fill="#00ff41aa" fontSize="7" textAnchor="middle" fontFamily="monospace">MS-27</text>
+          </g>
+        )}
+
+        {/* Rassvet (below Zarya) */}
+        <rect x="510" y="285" width="40" height="28" fill="#00ff4110" stroke="#00ff4177" strokeWidth="1" rx="2"/>
+        <text x="530" y="298" fill="#00ff41" fontSize="7" textAnchor="middle" fontFamily="monospace">RASSVET</text>
+        <text x="530" y="307" fill="#00ff4155" fontSize="6" textAnchor="middle" fontFamily="monospace">MRM-1</text>
+        <line x1="530" y1="272" x2="530" y2="285" stroke="#00ff4144" strokeWidth="1"/>
+        <rect x="513" y="313" width="34" height="14" fill={portColor("RASSVET-NAD")+"22"} stroke={portColor("RASSVET-NAD")} strokeWidth="0.8"/>
+        <text x="530" y="323" fill={portColor("RASSVET-NAD")} fontSize="6" textAnchor="middle" fontFamily="monospace">NADIR</text>
+        {dock["RASSVET-NAD"] && dock["RASSVET-NAD"].status==="OCCUPIED" && (
+          <g>
+            <rect x="497" y="330" width="66" height="26" fill="#00ff4118" stroke="#00ff41" strokeWidth="1" rx="2"/>
+            <text x="530" y="340" fill="#00ff41" fontSize="8" textAnchor="middle" fontFamily="monospace" fontWeight="bold">SOYUZ</text>
+            <text x="530" y="350" fill="#00ff41aa" fontSize="7" textAnchor="middle" fontFamily="monospace">MS-28</text>
+          </g>
+        )}
+
+        {/* Prichal */}
+        <rect x="400" y="380" width="90" height="18" fill="#00ff4108" stroke="#00ff4155" strokeWidth="0.8" rx="2"/>
+        <text x="445" y="392" fill="#00ff4199" fontSize="7" textAnchor="middle" fontFamily="monospace">PRICHAL (node)</text>
+
+        {/* ━━━ US / International Segment ━━━ */}
+        {/* Unity (Node 1) */}
+        <rect x="575" y="220" width="75" height="52" fill="#00ff4118" stroke="#00ff41" strokeWidth="1.2" rx="2"/>
+        <text x="612" y="242" fill="#00ff41" fontSize="10" textAnchor="middle" fontWeight="bold" fontFamily="monospace">UNITY</text>
+        <text x="612" y="254" fill="#00ff4177" fontSize="7" textAnchor="middle" fontFamily="monospace">Node 1</text>
+        <text x="612" y="265" fill="#00ff4155" fontSize="7" textAnchor="middle" fontFamily="monospace">1998</text>
+
+        {/* Unity Nadir (Cygnus) */}
+        <rect x="588" y="272" width="48" height="14" fill={portColor("UNITY-NAD")+"22"} stroke={portColor("UNITY-NAD")} strokeWidth="0.8"/>
+        <text x="612" y="282" fill={portColor("UNITY-NAD")} fontSize="6" textAnchor="middle" fontFamily="monospace">NADIR</text>
+        {dock["UNITY-NAD"] && (
+          <g>
+            <rect x="580" y="290" width="64" height="22" fill="#ffb00015" stroke="#ffb000" strokeWidth="0.8" rx="2" strokeDasharray="3,3"/>
+            <text x="612" y="300" fill="#ffb000" fontSize="7" textAnchor="middle" fontFamily="monospace" fontWeight="bold">CYGNUS XL</text>
+            <text x="612" y="308" fill="#ffb000aa" fontSize="6" textAnchor="middle" fontFamily="monospace">(Apr 8)</text>
+          </g>
+        )}
+
+        {/* Destiny (US Lab) */}
+        <rect x="650" y="225" width="105" height="42" fill="#00ff4118" stroke="#00ff41" strokeWidth="1.2" rx="2"/>
+        <text x="702" y="245" fill="#00ff41" fontSize="11" textAnchor="middle" fontWeight="bold" fontFamily="monospace">DESTINY</text>
+        <text x="702" y="257" fill="#00ff4177" fontSize="7" textAnchor="middle" fontFamily="monospace">US Lab \u00b7 2001</text>
+
+        {/* Tranquility (Node 3) - below Unity */}
+        <rect x="575" y="320" width="75" height="38" fill="#00ff4115" stroke="#00ff41bb" strokeWidth="1" rx="2"/>
+        <text x="612" y="336" fill="#00ff41" fontSize="9" textAnchor="middle" fontWeight="bold" fontFamily="monospace">TRANQUILITY</text>
+        <text x="612" y="348" fill="#00ff4177" fontSize="7" textAnchor="middle" fontFamily="monospace">Node 3</text>
+        <line x1="612" y1="286" x2="612" y2="320" stroke="#00ff4144" strokeWidth="1"/>
+
+        {/* Cupola */}
+        <rect x="588" y="362" width="48" height="22" fill="#00ff410e" stroke="#00ff4199" strokeWidth="0.8" rx="11"/>
+        <text x="612" y="377" fill="#00ff41" fontSize="8" textAnchor="middle" fontFamily="monospace">CUPOLA</text>
+
+        {/* Harmony (Node 2) */}
+        <rect x="755" y="220" width="75" height="52" fill="#00ff4118" stroke="#00ff41" strokeWidth="1.2" rx="2"/>
+        <text x="792" y="242" fill="#00ff41" fontSize="10" textAnchor="middle" fontWeight="bold" fontFamily="monospace">HARMONY</text>
+        <text x="792" y="254" fill="#00ff4177" fontSize="7" textAnchor="middle" fontFamily="monospace">Node 2</text>
+        <text x="792" y="265" fill="#00ff4155" fontSize="7" textAnchor="middle" fontFamily="monospace">2007</text>
+
+        {/* Harmony Forward (Crew-12 Dragon) */}
+        <rect x="830" y="234" width="48" height="24" fill={portColor("HARMONY-FWD")+"22"} stroke={portColor("HARMONY-FWD")} strokeWidth="0.8"/>
+        <text x="854" y="249" fill={portColor("HARMONY-FWD")} fontSize="7" textAnchor="middle" fontFamily="monospace">FWD</text>
+        {dock["HARMONY-FWD"] && dock["HARMONY-FWD"].status==="OCCUPIED" && (
+          <g>
+            <rect x="880" y="226" width="78" height="40" fill="#00ff4120" stroke="#00ff41" strokeWidth="1.2" rx="2"/>
+            <text x="919" y="240" fill="#00ff41" fontSize="9" textAnchor="middle" fontFamily="monospace" fontWeight="bold">DRAGON</text>
+            <text x="919" y="252" fill="#00ff41aa" fontSize="7" textAnchor="middle" fontFamily="monospace">Freedom</text>
+            <text x="919" y="262" fill="#00ff4177" fontSize="7" textAnchor="middle" fontFamily="monospace">Crew-12</text>
+          </g>
+        )}
+
+        {/* Harmony Zenith (available) */}
+        <rect x="770" y="200" width="44" height="20" fill="#00000055" stroke="#555" strokeWidth="0.6" strokeDasharray="2,3"/>
+        <text x="792" y="213" fill="#555" fontSize="7" textAnchor="middle" fontFamily="monospace">ZEN</text>
+
+        {/* Harmony Nadir (available) */}
+        <rect x="770" y="272" width="44" height="20" fill="#00000055" stroke="#555" strokeWidth="0.6" strokeDasharray="2,3"/>
+        <text x="792" y="285" fill="#555" fontSize="7" textAnchor="middle" fontFamily="monospace">NAD</text>
+
+        {/* Columbus (ESA) */}
+        <rect x="755" y="298" width="70" height="36" fill="#3388ff18" stroke="#3388ff" strokeWidth="1.2" rx="2"/>
+        <text x="790" y="315" fill="#3388ff" fontSize="9" textAnchor="middle" fontWeight="bold" fontFamily="monospace">COLUMBUS</text>
+        <text x="790" y="326" fill="#3388ffaa" fontSize="7" textAnchor="middle" fontFamily="monospace">ESA \u00b7 2008</text>
+        <line x1="790" y1="272" x2="790" y2="298" stroke="#3388ff66" strokeWidth="1"/>
+
+        {/* Kibo (JAXA) */}
+        <rect x="830" y="298" width="90" height="48" fill="#ff444418" stroke="#ff4444" strokeWidth="1.2" rx="2"/>
+        <text x="875" y="318" fill="#ff4444" fontSize="10" textAnchor="middle" fontWeight="bold" fontFamily="monospace">KIBO</text>
+        <text x="875" y="330" fill="#ff4444aa" fontSize="7" textAnchor="middle" fontFamily="monospace">JEM \u00b7 JAXA</text>
+        <text x="875" y="340" fill="#ff444477" fontSize="6" textAnchor="middle" fontFamily="monospace">2008</text>
+        <line x1="875" y1="272" x2="875" y2="298" stroke="#ff444466" strokeWidth="1"/>
+
+        {/* Kibo ELM-PS (exposed facility) */}
+        <rect x="830" y="354" width="54" height="18" fill="#ff444410" stroke="#ff444466" strokeWidth="0.6" rx="2"/>
+        <text x="857" y="365" fill="#ff444499" fontSize="6" textAnchor="middle" fontFamily="monospace">Kibo ELM</text>
+
+        {/* Module connections on truss line */}
+        <line x1="490" y1="246" x2="490" y2="246" stroke="#00ff4144"/>
+        <line x1="570" y1="246" x2="575" y2="246" stroke="#00ff4144"/>
+        <line x1="650" y1="246" x2="650" y2="246" stroke="#00ff4144"/>
+        <line x1="755" y1="246" x2="755" y2="246" stroke="#00ff4144"/>
+
+        {/* Vertical connection truss -> modules */}
+        <line x1="700" y1="208" x2="700" y2="225" stroke="#00ff4166" strokeWidth="1"/>
+
+        {/* ━━━ LEGEND ━━━ */}
+        <g transform="translate(1040,220)">
+          <rect x="0" y="0" width="280" height="170" fill="#000000cc" stroke="#00ff4133" strokeWidth="0.8"/>
+          <text x="10" y="16" fill="#00ff41" fontSize="9" fontFamily="monospace" fontWeight="bold" letterSpacing="2">{"\u25B8 LEGEND"}</text>
+          <line x1="10" y1="22" x2="270" y2="22" stroke="#00ff4122"/>
+
+          <rect x="10" y="30" width="12" height="10" fill="#00ff4118" stroke="#00ff41"/>
+          <text x="28" y="39" fill="#00ff41aa" fontSize="8" fontFamily="monospace">USOS (NASA/Roscosmos)</text>
+
+          <rect x="10" y="46" width="12" height="10" fill="#3388ff18" stroke="#3388ff"/>
+          <text x="28" y="55" fill="#3388ffaa" fontSize="8" fontFamily="monospace">ESA Columbus</text>
+
+          <rect x="10" y="62" width="12" height="10" fill="#ff444418" stroke="#ff4444"/>
+          <text x="28" y="71" fill="#ff4444aa" fontSize="8" fontFamily="monospace">JAXA Kibo</text>
+
+          <line x1="10" y1="82" x2="270" y2="82" stroke="#00ff4122"/>
+
+          <circle cx="16" cy="94" r="4" fill="#00ff41"/>
+          <text x="28" y="97" fill="#00ff41aa" fontSize="8" fontFamily="monospace">Port occupied (crew)</text>
+
+          <circle cx="16" cy="108" r="4" fill="#ffb000"/>
+          <text x="28" y="111" fill="#ffb000aa" fontSize="8" fontFamily="monospace">Port occupied (cargo)</text>
+
+          <circle cx="16" cy="122" r="4" fill="#555" stroke="#555"/>
+          <text x="28" y="125" fill="#888" fontSize="8" fontFamily="monospace">Port available</text>
+
+          <line x1="10" y1="134" x2="270" y2="134" stroke="#00ff4122"/>
+
+          <text x="10" y="148" fill="#00ff4177" fontSize="7" fontFamily="monospace">Total ports: 9</text>
+          <text x="10" y="160" fill="#00ff4199" fontSize="7" fontFamily="monospace">Occupied: 6 {"\u00b7"} Available: 3</text>
+        </g>
+      </svg>
+    </div>
+  );
+}
+
+// ─── TIANGONG MODULE DIAGRAM ────────────────────────────────────────────
+function TiangongModuleDiagram({dockingPorts}){
+  const dock = {};
+  dockingPorts.forEach(function(p){dock[p.id]=p;});
+  const portColor = function(id){const p=dock[id];return p && p.status==="OCCUPIED" ? p.color : "#333";};
+
+  return (
+    <div style={{border:"1px solid #ff6b3533",background:"#000",padding:14,position:"relative"}}>
+      <svg viewBox="0 0 1400 480" style={{width:"100%",display:"block"}}>
+        {/* Wentian solar arrays */}
+        <g>
+          <rect x="370" y="50" width="120" height="32" fill="#ff6b350a" stroke="#ff6b3555" strokeWidth="0.8"/>
+          <rect x="910" y="50" width="120" height="32" fill="#ff6b350a" stroke="#ff6b3555" strokeWidth="0.8"/>
+          {[0,1,2,3,4,5].map(function(k){return <line key={k} x1={370+20*(k+1)} y1="50" x2={370+20*(k+1)} y2="82" stroke="#ff6b3533" strokeWidth="0.4"/>;})}
+          {[0,1,2,3,4,5].map(function(k){return <line key={k} x1={910+20*(k+1)} y1="50" x2={910+20*(k+1)} y2="82" stroke="#ff6b3533" strokeWidth="0.4"/>;})}
+          <text x="430" y="44" fill="#ff6b3577" fontSize="8" textAnchor="middle" fontFamily="monospace">FLEXIBLE ARRAY</text>
+          <text x="970" y="44" fill="#ff6b3577" fontSize="8" textAnchor="middle" fontFamily="monospace">FLEXIBLE ARRAY</text>
+        </g>
+
+        {/* ═══ WENTIAN (Lab I) - Top ═══ */}
+        <rect x="500" y="90" width="400" height="90" fill="#ff6b3512" stroke="#ff6b35aa" strokeWidth="1.2" rx="3"/>
+        <text x="700" y="115" fill="#ff6b35" fontSize="16" textAnchor="middle" fontWeight="bold" fontFamily="monospace">{"\u95EE\u5929 WENTIAN"}</text>
+        <text x="700" y="133" fill="#ff6b35aa" fontSize="10" textAnchor="middle" fontFamily="monospace">Lab Module I {"\u00b7"} Jul 2022 {"\u00b7"} 23 t</text>
+        <text x="700" y="150" fill="#ff6b3577" fontSize="9" textAnchor="middle" fontFamily="monospace">Airlock + 10m Robotic Arm + Life Support Backup</text>
+        <text x="700" y="166" fill="#ff6b3566" fontSize="8" textAnchor="middle" fontFamily="monospace">Science racks: biology, life sciences, habitat optimization</text>
+
+        {/* Wentian radial port */}
+        <rect x="456" y="120" width="42" height="30" fill={portColor("WENTIAN-PORT")+"22"} stroke={portColor("WENTIAN-PORT")} strokeWidth="0.8"/>
+        <text x="477" y="139" fill={portColor("WENTIAN-PORT")} fontSize="7" textAnchor="middle" fontFamily="monospace">NODE</text>
+
+        {/* Connection to Tianhe */}
+        <line x1="700" y1="180" x2="700" y2="220" stroke="#ff6b35aa" strokeWidth="3"/>
+        <polygon points="696,218 700,228 704,218" fill="#ff6b35aa"/>
+
+        {/* ═══ TIANHE (Core) - Center ═══ */}
+        <rect x="450" y="220" width="500" height="120" fill="#ff6b3520" stroke="#ff6b35" strokeWidth="2" rx="4"/>
+        <text x="700" y="254" fill="#ff6b35" fontSize="20" textAnchor="middle" fontWeight="bold" fontFamily="monospace" letterSpacing="2">{"\u5929\u548C TIANHE"}</text>
+        <text x="700" y="274" fill="#ff6b35cc" fontSize="11" textAnchor="middle" fontFamily="monospace">CORE MODULE {"\u00b7"} Apr 2021 {"\u00b7"} 22.6 t</text>
+        <text x="700" y="292" fill="#ff6b3599" fontSize="9" textAnchor="middle" fontFamily="monospace">Crew Quarters (3) {"\u00b7"} Guidance + Navigation + Control</text>
+        <text x="700" y="308" fill="#ff6b3588" fontSize="9" textAnchor="middle" fontFamily="monospace">Life Support ECLSS {"\u00b7"} Propulsion {"\u00b7"} Main CMA 10m Arm</text>
+        <text x="700" y="326" fill="#ff6b3577" fontSize="8" textAnchor="middle" fontFamily="monospace">5 docking ports: Fwd (axial) + Aft (axial) + Nadir + Zenith + 2 radial nodes</text>
+
+        {/* Tianhe solar arrays */}
+        <g>
+          <rect x="310" y="238" width="140" height="32" fill="#ff6b350a" stroke="#ff6b3555" strokeWidth="0.8"/>
+          <rect x="310" y="278" width="140" height="32" fill="#ff6b350a" stroke="#ff6b3555" strokeWidth="0.8"/>
+          <rect x="950" y="238" width="140" height="32" fill="#ff6b350a" stroke="#ff6b3555" strokeWidth="0.8"/>
+          <rect x="950" y="278" width="140" height="32" fill="#ff6b350a" stroke="#ff6b3555" strokeWidth="0.8"/>
+          {[0,1,2,3,4,5,6].map(function(k){return (
+            <g key={"ts"+k}>
+              <line x1={310+20*(k+1)} y1="238" x2={310+20*(k+1)} y2="310" stroke="#ff6b3533" strokeWidth="0.4"/>
+              <line x1={950+20*(k+1)} y1="238" x2={950+20*(k+1)} y2="310" stroke="#ff6b3533" strokeWidth="0.4"/>
+            </g>
+          );})}
+        </g>
+
+        {/* ━━━ DOCKED VEHICLES ━━━ */}
+        {/* Tianhe FWD (Shenzhou 21) */}
+        <rect x="410" y="250" width="40" height="40" fill={portColor("TIANHE-FWD")+"22"} stroke={portColor("TIANHE-FWD")} strokeWidth="1"/>
+        <text x="430" y="273" fill={portColor("TIANHE-FWD")} fontSize="8" textAnchor="middle" fontFamily="monospace" fontWeight="bold">FWD</text>
+        {dock["TIANHE-FWD"] && dock["TIANHE-FWD"].status==="OCCUPIED" && (
+          <g>
+            <rect x="320" y="240" width="90" height="60" fill="#ff6b3525" stroke="#ff6b35" strokeWidth="1.5" rx="3"/>
+            <text x="365" y="260" fill="#ff6b35" fontSize="12" textAnchor="middle" fontWeight="bold" fontFamily="monospace">SHENZHOU</text>
+            <text x="365" y="275" fill="#ff6b35" fontSize="14" textAnchor="middle" fontWeight="bold" fontFamily="monospace">21 {"\u795E\u821F"}</text>
+            <text x="365" y="290" fill="#ff6b35aa" fontSize="8" textAnchor="middle" fontFamily="monospace">Crew: 3</text>
+          </g>
+        )}
+
+        {/* Tianhe AFT (Tianzhou 9) */}
+        <rect x="950" y="250" width="40" height="40" fill={portColor("TIANHE-AFT")+"22"} stroke={portColor("TIANHE-AFT")} strokeWidth="1"/>
+        <text x="970" y="273" fill={portColor("TIANHE-AFT")} fontSize="8" textAnchor="middle" fontFamily="monospace" fontWeight="bold">AFT</text>
+        {dock["TIANHE-AFT"] && dock["TIANHE-AFT"].status==="OCCUPIED" && (
+          <g>
+            <rect x="990" y="240" width="90" height="60" fill="#ffb00025" stroke="#ffb000" strokeWidth="1.5" rx="3"/>
+            <text x="1035" y="260" fill="#ffb000" fontSize="12" textAnchor="middle" fontWeight="bold" fontFamily="monospace">TIANZHOU</text>
+            <text x="1035" y="275" fill="#ffb000" fontSize="14" textAnchor="middle" fontWeight="bold" fontFamily="monospace">9 {"\u5929\u821F"}</text>
+            <text x="1035" y="290" fill="#ffb000aa" fontSize="8" textAnchor="middle" fontFamily="monospace">Cargo resupply</text>
+          </g>
+        )}
+
+        {/* Tianhe Nadir (Shenzhou 22 rescue) */}
+        <rect x="680" y="340" width="40" height="30" fill={portColor("TIANHE-NAD")+"22"} stroke={portColor("TIANHE-NAD")} strokeWidth="1"/>
+        <text x="700" y="359" fill={portColor("TIANHE-NAD")} fontSize="7" textAnchor="middle" fontFamily="monospace" fontWeight="bold">NADIR</text>
+        {dock["TIANHE-NAD"] && dock["TIANHE-NAD"].status==="OCCUPIED" && (
+          <g>
+            <rect x="655" y="375" width="90" height="50" fill="#ff333328" stroke="#ff3333" strokeWidth="1.5" rx="3"/>
+            <text x="700" y="392" fill="#ff3333" fontSize="11" textAnchor="middle" fontWeight="bold" fontFamily="monospace">{"\u26A0 SHENZHOU"}</text>
+            <text x="700" y="406" fill="#ff3333" fontSize="13" textAnchor="middle" fontWeight="bold" fontFamily="monospace">22 RESCUE</text>
+            <text x="700" y="418" fill="#ff3333aa" fontSize="7" textAnchor="middle" fontFamily="monospace">Emergency standby</text>
+          </g>
+        )}
+
+        {/* Tianhe Zenith (empty) */}
+        <rect x="680" y="190" width="40" height="30" fill="#00000055" stroke="#555" strokeWidth="0.6" strokeDasharray="2,3"/>
+        <text x="700" y="209" fill="#555" fontSize="7" textAnchor="middle" fontFamily="monospace">ZENITH</text>
+
+        {/* ═══ MENGTIAN (Lab II) - Bottom-ish (below Tianhe) ═══ */}
+        {/* Connection */}
+        <line x1="700" y1="370" x2="700" y2="410" stroke="#ff6b35aa" strokeWidth="3" strokeDasharray="none" opacity="0"/>
+        {/* Actually Mengtian is on the other radial port */}
+
+        {/* Mengtian — on opposite side of Wentian through the node */}
+        <rect x="100" y="220" width="300" height="90" fill="#ff6b3512" stroke="#ff6b35aa" strokeWidth="1.2" rx="3"/>
+        <text x="250" y="248" fill="#ff6b35" fontSize="14" textAnchor="middle" fontWeight="bold" fontFamily="monospace">{"\u68A6\u5929 MENGTIAN"}</text>
+        <text x="250" y="265" fill="#ff6b35aa" fontSize="9" textAnchor="middle" fontFamily="monospace">Lab Module II {"\u00b7"} Oct 2022 {"\u00b7"} 23 t</text>
+        <text x="250" y="282" fill="#ff6b3577" fontSize="8" textAnchor="middle" fontFamily="monospace">Ultra-cold atom lab</text>
+        <text x="250" y="296" fill="#ff6b3577" fontSize="8" textAnchor="middle" fontFamily="monospace">Fluid physics + Combustion</text>
+
+        {/* Mengtian radial port */}
+        <rect x="402" y="250" width="42" height="30" fill={portColor("MENGTIAN-PORT")+"22"} stroke={portColor("MENGTIAN-PORT")} strokeWidth="0.8"/>
+        <text x="423" y="269" fill={portColor("MENGTIAN-PORT")} fontSize="7" textAnchor="middle" fontFamily="monospace">NODE</text>
+
+        {/* Actually let me reposition: Mengtian is radial port opposite to Wentian */}
+        {/* Redraw connection properly */}
+
+        {/* Xuntian (future co-orbiting telescope) */}
+        <rect x="1160" y="90" width="220" height="80" fill="#ff6b3508" stroke="#ff6b3544" strokeWidth="1" strokeDasharray="4,4" rx="3"/>
+        <text x="1270" y="116" fill="#ff6b35aa" fontSize="11" textAnchor="middle" fontWeight="bold" fontFamily="monospace">{"\u5DE1\u5929 XUNTIAN"}</text>
+        <text x="1270" y="132" fill="#ff6b3577" fontSize="8" textAnchor="middle" fontFamily="monospace">Space Telescope</text>
+        <text x="1270" y="146" fill="#ff6b3555" fontSize="8" textAnchor="middle" fontFamily="monospace">Co-orbiting (docks for service)</text>
+        <text x="1270" y="160" fill="#ff6b3544" fontSize="7" textAnchor="middle" fontFamily="monospace">Launch: late 2026</text>
+
+        {/* ━━━ LEGEND ━━━ */}
+        <g transform="translate(40,370)">
+          <rect x="0" y="0" width="300" height="110" fill="#000000cc" stroke="#ff6b3533" strokeWidth="0.8"/>
+          <text x="10" y="18" fill="#ff6b35" fontSize="10" fontFamily="monospace" fontWeight="bold" letterSpacing="2">{"\u25B8 LEGEND"}</text>
+          <line x1="10" y1="24" x2="290" y2="24" stroke="#ff6b3522"/>
+
+          <circle cx="18" cy="38" r="5" fill="#ff6b35"/>
+          <text x="30" y="42" fill="#ff6b35aa" fontSize="9" fontFamily="monospace">Shenzhou crew vehicle</text>
+
+          <circle cx="18" cy="54" r="5" fill="#ffb000"/>
+          <text x="30" y="58" fill="#ffb000aa" fontSize="9" fontFamily="monospace">Tianzhou cargo ship</text>
+
+          <circle cx="18" cy="70" r="5" fill="#ff3333"/>
+          <text x="30" y="74" fill="#ff3333aa" fontSize="9" fontFamily="monospace">Rescue spacecraft</text>
+
+          <circle cx="18" cy="86" r="5" fill="#555"/>
+          <text x="30" y="90" fill="#888" fontSize="9" fontFamily="monospace">Available port</text>
+
+          <text x="10" y="104" fill="#ff6b3577" fontSize="7" fontFamily="monospace">Total ports: 6 {"\u00b7"} Occupied: 3 {"\u00b7"} Available: 3</text>
+        </g>
+
+        {/* Config label */}
+        <text x="1100" y="420" fill="#ff6b3566" fontSize="10" fontFamily="monospace" textAnchor="middle" fontWeight="bold">T-SHAPED CONFIGURATION</text>
+        <text x="1100" y="436" fill="#ff6b3544" fontSize="8" fontFamily="monospace" textAnchor="middle">3 modules {"\u00b7"} 340 m\u00b3 volume {"\u00b7"} ~100 t total</text>
+        <text x="1100" y="450" fill="#ff6b3533" fontSize="7" fontFamily="monospace" textAnchor="middle">Pattern similar to Mir core orbital configuration</text>
+      </svg>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+ReactDOM.createRoot(document.getElementById("root")).render(<OrbitalCommand/>);
+</script>
+</body>
+</html>
