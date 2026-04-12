@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Station Commander — ISS & Tiangong Live Tracker</title>
+<meta name="description" content="Real-time tactical tracker for the International Space Station (ISS) and China's Tiangong. Live telemetry, docked vehicles, module diagrams, crew, health monitoring.">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-track{background:#0d1117}
+  ::-webkit-scrollbar-thumb{background:#21262d;border-radius:4px}
+  ::-webkit-scrollbar-thumb:hover{background:#30363d}
+  html,body{
+    background:#0d1117;
+    font-family:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;
+    color:#c9d1d9;
+    min-height:100vh;
+    font-size:14px;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
+  }
+  body{overflow-x:hidden}
+  @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+  @keyframes dot{0%,100%{opacity:1}50%{opacity:.3}}
+  #root{min-height:100vh}
+  .btn{cursor:pointer;font-family:inherit;transition:background .15s,border-color .15s,color .15s}
+  .caret{display:inline-block;width:8px;height:15px;background:#58a6ff;animation:blink 1.1s infinite;vertical-align:middle;margin-left:2px}
+  a{color:#58a6ff;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .jb-link{color:#58a6ff;font-weight:500}
+  .jb-path{color:#8b949e}
+  .section-marker{color:#58a6ff;margin-right:6px}
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+/* ═══════════════════════════════════════════════════════════════════════
+   ORBITAL COMMAND v4.1  —  ISS & TIANGONG TACTICAL TRACKER
+   ═══════════════════════════════════════════════════════════════════════ */
+
+// ─── LAND MASK ─────────────────────────────────────────────────────────
+const LAND_REGIONS = [
+  {latMin:25,latMax:50,lonMin:-130,lonMax:-65},{latMin:50,latMax:72,lonMin:-170,lonMax:-55},
+  {latMin:15,latMax:30,lonMin:-118,lonMax:-85},{latMin:8,latMax:22,lonMin:-90,lonMax:-60},
+  {latMin:-5,latMax:12,lonMin:-82,lonMax:-50},{latMin:-25,latMax:-5,lonMin:-75,lonMax:-35},
+  {latMin:-40,latMax:-25,lonMin:-72,lonMax:-48},{latMin:-55,latMax:-40,lonMin:-75,lonMax:-62},
+  {latMin:36,latMax:60,lonMin:-10,lonMax:30},{latMin:55,latMax:71,lonMin:5,lonMax:40},
+  {latMin:38,latMax:45,lonMin:-10,lonMax:5},{latMin:20,latMax:37,lonMin:-17,lonMax:35},
+  {latMin:0,latMax:20,lonMin:-18,lonMax:50},{latMin:-15,latMax:0,lonMin:10,lonMax:42},
+  {latMin:-35,latMax:-15,lonMin:15,lonMax:40},{latMin:40,latMax:55,lonMin:30,lonMax:60},
+  {latMin:50,latMax:72,lonMin:40,lonMax:180},{latMin:35,latMax:50,lonMin:60,lonMax:140},
+  {latMin:20,latMax:42,lonMin:65,lonMax:125},{latMin:5,latMax:20,lonMin:68,lonMax:92},
+  {latMin:-10,latMax:20,lonMin:95,lonMax:140},{latMin:30,latMax:42,lonMin:125,lonMax:145},
+  {latMin:12,latMax:38,lonMin:32,lonMax:62},{latMin:-40,latMax:-12,lonMin:114,lonMax:153},
+  {latMin:-47,latMax:-34,lonMin:166,lonMax:178},{latMin:60,latMax:83,lonMin:-55,lonMax:-15},
+  {latMin:50,latMax:59,lonMin:-11,lonMax:2},{latMin:-8,latMax:8,lonMin:95,lonMax:130},
+  {latMin:5,latMax:20,lonMin:117,lonMax:127},
+];
+const isLand = (lat,lon) => LAND_REGIONS.some(r => lat>=r.latMin && lat<=r.latMax && lon>=r.lonMin && lon<=r.lonMax);
+
+// ─── ORBIT SIMULATION ───────────────────────────────────────────────────
+function simulateOrbit(t, inc, perMin, phase) {
+  phase = phase || 0;
+  var perMs = perMin*60*1000;
+  var frac = ((t+phase)%perMs)/perMs;
+  var rawLon = (frac*360+180)%360 - 180;
+  var earthRot = ((t/60000)*0.25)%360;
+  var lon = ((rawLon - earthRot + 540) % 360) - 180;
+  var lat = inc * Math.sin(frac*2*Math.PI);
+  return {latitude:lat, longitude:lon};
+}
+
+// ─── STATION DATA ───────────────────────────────────────────────────────
+const ISS_DATA = {
+  name:"ISS", fullName:"International Space Station", noradId:25544,
+  launched:"1998-11-20T06:40:00Z", launchLabel:"Nov 20, 1998",
+  expedition:"74", mission:"Expedition 74",
+  crewCount:7, partners:5,
+  mass:"419,725 kg", volume:"916 m\u00b3", modules:16, power:"215 kW",
+  length:"109 m", width:"73 m", arrays:"8 \u00d7 USOS arrays",
+  inclination:51.64, period:92.68, apogee:422, perigee:418, altitude:408,
+  agencies:"NASA \u00b7 Roscosmos \u00b7 ESA \u00b7 JAXA \u00b7 CSA",
+  primaryColor:"#3fb950",
+  crew:[
+    {name:"Sergey Kud-Sverchkov",role:"ISS Commander",flag:"RU",agency:"Roscosmos",vehicle:"Soyuz MS-27",days:198},
+    {name:"Sergei Mikayev",role:"Flight Engineer",flag:"RU",agency:"Roscosmos",vehicle:"Soyuz MS-27",days:198},
+    {name:"Christopher Williams",role:"Flight Engineer",flag:"US",agency:"NASA",vehicle:"Crew-11 ext.",days:242},
+    {name:"Jessica Meir",role:"Crew-12 Commander",flag:"US",agency:"NASA",vehicle:"Crew-12 Dragon",days:50},
+    {name:"Jack Hathaway",role:"Crew-12 Pilot",flag:"US",agency:"NASA",vehicle:"Crew-12 Dragon",days:50},
+    {name:"Sophie Adenot",role:"Mission Specialist",flag:"FR",agency:"ESA",vehicle:"Crew-12 Dragon",days:50},
+    {name:"Andrey Fedyaev",role:"Mission Specialist",flag:"RU",agency:"Roscosmos",vehicle:"Crew-12 Dragon",days:50},
+  ],
+  comms:[
+    {band:"S-Band",freq:"2.0\u20132.3 GHz",use:"Voice / Telemetry / Commanding",rate:"192 kbps"},
+    {band:"Ku-Band",freq:"13.775 GHz",use:"Video / Science downlink",rate:"50 Mbps"},
+    {band:"Ka-Band",freq:"25.5\u201327 GHz",use:"ILLUMA-T / LCRD optical",rate:"1.2 Gbps"},
+    {band:"UHF",freq:"414.2 MHz",use:"EVA suit comms",rate:"4 kbps"},
+    {band:"TDRS",freq:"Multi-band relay",use:"Ground coverage ~80%",rate:"variable"},
+  ],
+  dockingPorts:[
+    {id:"HARMONY-FWD",name:"Harmony Forward (PMA-2)",vehicle:"Crew Dragon Freedom",mission:"Crew-12",status:"OCCUPIED",color:"#3fb950",type:"crew"},
+    {id:"HARMONY-ZEN",name:"Harmony Zenith (IDA-3)",vehicle:null,mission:"",status:"AVAILABLE",color:"#6e7681",type:"crew"},
+    {id:"HARMONY-NAD",name:"Harmony Nadir (PMA-3)",vehicle:null,mission:"",status:"AVAILABLE",color:"#6e7681",type:"crew"},
+    {id:"UNITY-NAD",name:"Unity Nadir",vehicle:"Cygnus XL",mission:"NG-23 (expected Apr 8)",status:"RESERVED",color:"#d29922",type:"cargo"},
+    {id:"POISK-ZEN",name:"Poisk Zenith",vehicle:"Soyuz MS-27",mission:"Expedition 74",status:"OCCUPIED",color:"#3fb950",type:"crew"},
+    {id:"RASSVET-NAD",name:"Rassvet Nadir",vehicle:"Soyuz MS-28",mission:"Returning Apr 15",status:"OCCUPIED",color:"#3fb950",type:"crew"},
+    {id:"ZVEZDA-AFT",name:"Zvezda Aft",vehicle:"Progress MS-31",mission:"Resupply",status:"OCCUPIED",color:"#d29922",type:"cargo"},
+    {id:"NAUKA-NAD",name:"Nauka Nadir",vehicle:"Progress MS-30",mission:"Reboost Apr 10",status:"OCCUPIED",color:"#d29922",type:"cargo"},
+    {id:"PRICHAL-NAD",name:"Prichal Nadir",vehicle:null,mission:"",status:"AVAILABLE",color:"#6e7681",type:"crew"},
+  ],
+  health:{
+    oxygenLevel:"20.9%",co2:"2.8 mmHg",pressure:"101.3 kPa",temperature:"22.1 \u00b0C",humidity:"56%",waterRecycle:"93%",
+    powerLoad:"142 kW / 215 kW",batterySoC:"87%",thermalLoad:"NOMINAL",
+    radiationDose:"0.12 mSv/day",propellant:"72%",
+    attitude:{ pitch:"-0.21\u00b0", yaw:"+0.08\u00b0", roll:"0.00\u00b0", control:"CMG (4/4)" }
+  },
+  ops:{
+    groundControl:"MCC-H Houston / TsUP Moscow / Col-CC Munich",
+    o2System:"OGS Electrolysis + Elektron VM",
+    co2Scrubber:"CDRA (US) + Vozdukh (RU)",
+    waterSystem:"WRS \u2014 93% recycle",
+    exerciseGear:"ARED \u00b7 T2 Treadmill \u00b7 CEVIS",
+    eva:"US EMU \u00b7 Orlan-MKS",
+    roboticArm:"Canadarm2 (17.6m, 7-DOF) + JEMRMS + ERA",
+  },
+};
+
+const TG_DATA = {
+  name:"TIANGONG", fullName:"\u5929\u5BAB Tiangong Space Station", noradId:48274,
+  launched:"2021-04-29T03:23:00Z", launchLabel:"Apr 29, 2021",
+  expedition:"Shenzhou 21", mission:"Shenzhou 21",
+  crewCount:3, partners:1,
+  mass:"~100,000 kg", volume:"340 m\u00b3", modules:3, power:"~100 kW",
+  length:"~55 m", width:"~30 m", arrays:"4 \u00d7 flexible arrays",
+  inclination:41.47, period:91.4, apogee:395, perigee:385, altitude:390,
+  agencies:"CMSA \u2014 China Manned Space Agency",
+  primaryColor:"#f0883e",
+  crew:[
+    {name:"Zhang Lu \u5F20\u9646",role:"Commander",flag:"CN",agency:"CMSA",vehicle:"Shenzhou 21",days:154},
+    {name:"Wu Fei \u5434\u98DE",role:"Spaceflight Engineer",flag:"CN",agency:"CAST",vehicle:"Shenzhou 21",days:154},
+    {name:"Zhang Hongzhang \u5F20\u9E3F\u7AE0",role:"Payload Specialist",flag:"CN",agency:"CAS",vehicle:"Shenzhou 21",days:154},
+  ],
+  comms:[
+    {band:"S-Band",freq:"2.0\u20132.3 GHz",use:"TT&C / Voice uplink",rate:"~200 kbps"},
+    {band:"Ka-Band",freq:"~26 GHz",use:"High-rate science",rate:"1.2 Gbps"},
+    {band:"Tianlian",freq:"Multi-band relay",use:"TDRS-equivalent (3 sats)",rate:"variable"},
+    {band:"UHF",freq:"~400 MHz",use:"EVA suit comms",rate:"~4 kbps"},
+    {band:"Laser",freq:"Optical 1550nm",use:"Experimental high-BW",rate:"10+ Gbps"},
+  ],
+  dockingPorts:[
+    {id:"TIANHE-FWD",name:"Tianhe Forward (Axial)",vehicle:"Shenzhou 21",mission:"Crew rotation",status:"OCCUPIED",color:"#f0883e",type:"crew"},
+    {id:"TIANHE-AFT",name:"Tianhe Aft (Axial)",vehicle:"Tianzhou 9",mission:"Cargo resupply",status:"OCCUPIED",color:"#d29922",type:"cargo"},
+    {id:"TIANHE-NAD",name:"Tianhe Nadir",vehicle:"Shenzhou 22",mission:"Emergency rescue",status:"OCCUPIED",color:"#f85149",type:"rescue"},
+    {id:"TIANHE-ZEN",name:"Tianhe Zenith",vehicle:null,mission:"",status:"AVAILABLE",color:"#6e7681",type:"crew"},
+    {id:"WENTIAN-PORT",name:"Wentian Radial (Node)",vehicle:null,mission:"",status:"AVAILABLE",color:"#6e7681",type:"crew"},
+    {id:"MENGTIAN-PORT",name:"Mengtian Radial (Node)",vehicle:null,mission:"",status:"AVAILABLE",color:"#6e7681",type:"crew"},
+  ],
+  health:{
+    oxygenLevel:"21.0%",co2:"3.1 mmHg",pressure:"101.0 kPa",temperature:"23.5 \u00b0C",humidity:"52%",waterRecycle:"~95%",
+    powerLoad:"~68 kW / ~100 kW",batterySoC:"91%",thermalLoad:"NOMINAL",
+    radiationDose:"0.11 mSv/day",propellant:"81%",
+    attitude:{ pitch:"0.00\u00b0", yaw:"0.00\u00b0", roll:"0.00\u00b0", control:"CMG (6/6)" }
+  },
+  ops:{
+    groundControl:"BACC Beijing Aerospace Control Center",
+    o2System:"Regenerative ECLSS (electrolysis)",
+    co2Scrubber:"LiOH + regenerative absorber",
+    waterSystem:"~95% closed-loop recycle",
+    exerciseGear:"Treadmill \u00b7 Cycle ergometer",
+    eva:"Feitian Gen-2",
+    roboticArm:"CMA 10m 7-DOF (Tianhe) + Wentian arm",
+  },
+};
+
+const NEWS = [
+  {t:"2026-04-04 08:12",s:"NASA",st:"iss",h:"Expedition 74 prepares for Cygnus XL capture with Canadarm2 on Apr 8"},
+  {t:"2026-04-01 18:24",s:"NASA",st:"both",h:"Artemis II launches from KSC Pad 39B \u2014 first crewed lunar mission since 1972"},
+  {t:"2026-03-22",s:"Roscosmos",st:"iss",h:"Progress MS-33 successfully launches from Baikonur to resupply ISS"},
+  {t:"2026-03-15",s:"CMSA",st:"tg",h:"Shenzhou 21 crew conducts 3rd EVA to install debris shields on Tianhe"},
+];
+
+// ═══════════════════════════════════════════════════════════════════════
+//  MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════════
+function OrbitalCommand() {
+  const [iss, setIss] = useState(null);
+  const [tg, setTg] = useState(null);
+  const [time, setTime] = useState(Date.now());
+  const [tab, setTab] = useState("iss");
+  const [issTrail, setIssTrail] = useState([]);
+  const [tgTrail, setTgTrail] = useState([]);
+  const [apiStatus, setApiStatus] = useState("connecting");
+
+  const fetchISS = useCallback(function(){
+    fetch("https://api.wheretheiss.at/v1/satellites/25544")
+      .then(function(r){if(!r.ok)throw new Error();return r.json();})
+      .then(function(d){
+        setIss(Object.assign({},d,{live:true}));
+        setApiStatus("online");
+        setIssTrail(function(p){return p.slice(-300).concat([{lat:d.latitude,lon:d.longitude,t:Date.now()}]);});
+      })
+      .catch(function(){
+        setApiStatus("offline");
+        var s=simulateOrbit(Date.now(),51.64,92.68,0);
+        var d={latitude:s.latitude,longitude:s.longitude,altitude:408+Math.random()*5,velocity:27580+Math.random()*40,visibility:Math.random()>0.4?"daylight":"eclipsed",live:false};
+        setIss(d);
+        setIssTrail(function(p){return p.slice(-300).concat([{lat:d.latitude,lon:d.longitude,t:Date.now()}]);});
+      });
+  },[]);
+
+  const updateTG = useCallback(function(){
+    var s=simulateOrbit(Date.now(),41.47,91.4,4800000);
+    var d={latitude:s.latitude,longitude:s.longitude,altitude:388+Math.random()*8,velocity:27640+Math.random()*30,visibility:Math.random()>0.4?"daylight":"eclipsed",live:false};
+    setTg(d);
+    setTgTrail(function(p){return p.slice(-300).concat([{lat:d.latitude,lon:d.longitude,t:Date.now()}]);});
+  },[]);
+
+  useEffect(function(){
+    fetchISS();updateTG();
+    var i=setInterval(function(){fetchISS();updateTG();},4000);
+    return function(){clearInterval(i);};
+  },[fetchISS,updateTG]);
+  useEffect(function(){var i=setInterval(function(){setTime(Date.now());},1000);return function(){clearInterval(i);};},[]);
+
+  const landDots = useMemo(function(){
+    var d=[];
+    for(var la=-58;la<=74;la+=1.6)for(var lo=-178;lo<=178;lo+=1.6)if(isLand(la,lo))d.push({la:la,lo:lo});
+    return d;
+  },[]);
+
+  const elapsed=function(d){var df=time-new Date(d).getTime(),dy=Math.floor(df/864e5),hr=Math.floor((df%864e5)/36e5),mn=Math.floor((df%36e5)/6e4),sc=Math.floor((df%6e4)/1e3);return{dy:dy,hr:hr,mn:mn,sc:sc};};
+  const pad=function(n){return String(n).padStart(2,"0");};
+  const fmtCoord=function(v,p,n){return v!=null?Math.abs(v).toFixed(4)+"\u00b0 "+(v>=0?p:n):"---";};
+
+  const st = tab==="iss" ? ISS_DATA : TG_DATA;
+  const posData = tab==="iss" ? iss : tg;
+  const curE = elapsed(st.launched);
+
+  // Dynamic values to simulate telemetry updates on the UI
+  const rndO2 = (parseFloat(st.health.oxygenLevel) + (Math.random() * 0.04 - 0.02)).toFixed(2) + "%";
+  const rndPres = (parseFloat(st.health.pressure) + (Math.random() * 0.2 - 0.1)).toFixed(2) + " kPa";
+
+  return (
+    <div style={{minHeight:"100vh",color:"#c9d1d9",padding:"0",maxWidth:1400,margin:"0 auto"}}>
+
+      {/* ═══ TOP NAV (FLIGHT DIRECTOR) ═══ */}
+      <div style={{borderBottom:"1px solid #21262d",padding:"16px 24px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,background:"#0d1117",position:"sticky",top:0,zIndex:100}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,fontSize:13}}>
+          <span style={{color:"#58a6ff",fontWeight:700,letterSpacing:1}}>FLIGHT DIRECTOR</span>
+          <span style={{color:"#30363d"}}>·</span>
+          <a href="https://rmayormartins.github.io" target="_blank" rel="noopener" style={{color:"#8b949e",fontWeight:500}}>Ramon Mayor Martins</a>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:14,fontSize:12,color:"#8b949e"}}>
+          <span style={{display:"flex",alignItems:"center",gap:6}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:apiStatus==="online"?"#3fb950":"#f0883e",animation:"dot 1.8s infinite",display:"inline-block"}}/>
+            <span style={{color:apiStatus==="online"?"#3fb950":"#f0883e", fontWeight:600}}>API LIVE</span>
+          </span>
+          <span style={{color:"#30363d"}}>·</span>
+          <span>{new Date(time).toISOString().slice(11,19)} UTC</span>
+        </div>
+      </div>
+
+      <div style={{padding:"24px 24px 20px"}}>
+        <h1 style={{fontSize:28,fontWeight:700,color:"#e6edf3",margin:"0 0 10px",fontFamily:"inherit",letterSpacing:"-0.3px"}}>
+          Station Commander — ISS & Tiangong Live Tracker
+        </h1>
+        <p style={{color:"#8b949e",fontSize:14,margin:0,lineHeight:1.5}}>
+          Tactical dashboard <span className="caret"/>
+        </p>
+      </div>
+
+      {/* ═══ CONTENT WRAPPER ═══ */}
+      <div style={{padding:"0 24px 40px"}}>
+
+      {/* ═══ STATION TABS ═══ */}
+      <div style={{display:"flex",gap:0,marginBottom:18,borderBottom:"1px solid #21262d"}}>
+        {[
+          {id:"iss",label:"ISS",sub:"Expedition 74 \u00b7 7 crew",color:"#3fb950"},
+          {id:"tg",label:"TIANGONG \u5929\u5BAB",sub:"Shenzhou 21 \u00b7 3 crew",color:"#f0883e"},
+        ].map(function(t){
+          const active = tab===t.id;
+          return (
+            <button key={t.id} className="btn" onClick={function(){setTab(t.id);}} style={{
+              flex:1,background:active?"#161b22":"transparent",
+              border:"none",borderBottom:active?"2px solid "+t.color:"2px solid transparent",
+              padding:"14px 20px",textAlign:"left",color:active?t.color:"#8b949e",
+            }}>
+              <div style={{fontSize:14,fontWeight:600,marginBottom:3}}>{t.label}</div>
+              <div style={{fontSize:10,color:active?t.color+"99":"#6e7681"}}>{t.sub}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {/* ═══ MISSION CLOCK BAR ═══ */}
+      <div style={{border:"1px solid #21262d",background:"#161b22",padding:"14px 18px",marginBottom:18,display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:14}}>
+        <div>
+          <div style={{fontSize:10,color:"#8b949e",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>Mission elapsed time (MET)</div>
+          <div style={{fontSize:10,color:"#6e7681"}}>since {st.launchLabel}</div>
+        </div>
+        <div style={{display:"flex",gap:20,alignItems:"flex-end"}}>
+          {[[curE.dy,"DAYS"],[pad(curE.hr),"HRS"],[pad(curE.mn),"MIN"],[pad(curE.sc),"SEC"]].map(function(x,i){return (
+            <div key={i} style={{textAlign:"center"}}>
+              <div style={{fontSize:28,fontWeight:600,color:st.primaryColor,lineHeight:1,fontVariantNumeric:"tabular-nums"}}>{x[0]}</div>
+              <div style={{fontSize:9,color:"#6e7681",marginTop:3,letterSpacing:1}}>{x[1]}</div>
+            </div>
+          );})}
+        </div>
+        <div style={{textAlign:"right"}}>
+          <div style={{fontSize:10,color:"#8b949e",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>Status</div>
+          <div style={{fontSize:13,fontWeight:600,color:st.primaryColor}}>NOMINAL OPERATIONS</div>
+        </div>
+      </div>
+
+      {/* ═══ SECTION 1: TOPO ═══ */}
+      <Section title={"TOPO: ORBITAL TRAJECTORY & TRACKING"} subtitle="MERCATOR GROUND TRACK \u00b7 TELEMETRY" color={st.primaryColor}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",gap:8,marginBottom:14}}>
+          <Metric label="LATITUDE" value={fmtCoord(posData?posData.latitude:null,"N","S")} color={st.primaryColor}/>
+          <Metric label="LONGITUDE" value={fmtCoord(posData?posData.longitude:null,"E","W")} color={st.primaryColor}/>
+          <Metric label="ALTITUDE" value={posData?posData.altitude.toFixed(1)+" km":"---"} sub={"nominal: "+st.altitude+" km"} color={st.primaryColor}/>
+          <Metric label="VELOCITY" value={posData?posData.velocity.toFixed(0)+" km/h":"---"} sub="orbital speed" color={st.primaryColor}/>
+          <Metric label="PERIOD" value={st.period+" min"} sub="1 orbit duration" color={st.primaryColor}/>
+        </div>
+
+        <div style={{border:"1px solid "+st.primaryColor+"33",background:"#000",padding:2,position:"relative"}}>
+          <svg viewBox="0 0 1440 500" style={{width:"100%",display:"block",objectFit:"cover"}}>
+            <defs>
+              <pattern id="grid-bg" width="72" height="72" patternUnits="userSpaceOnUse">
+                <path d="M72 0L0 0 0 72" fill="none" stroke="#3fb95008" strokeWidth="0.5"/>
+              </pattern>
+              <radialGradient id="glow-iss" cx="50%" cy="50%" r="50%">
+                <stop offset="0%" stopColor="#3fb950" stopOpacity
