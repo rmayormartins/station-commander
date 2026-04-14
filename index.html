@@ -68,7 +68,7 @@
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-<script src="https://unpkg.com/lightstreamer-client-web@9.2.0/lightstreamer.min.js"></script>
+<script src="https://unpkg.com/lightstreamer-client-web/lightstreamer.min.js"></script>
 </head>
 <body>
 <div id="root"></div>
@@ -421,52 +421,84 @@ function StationCommander() {
 
   // ─── LIGHTSTREAMER LIVE TELEMETRY ──────────────────────────────────
   useEffect(function(){
-    if(typeof lightstreamer === "undefined"){
-      setLsStatus("library-missing");
-      return;
-    }
     let client, sub;
-    try {
-      client = new lightstreamer.LightstreamerClient("https://push.lightstreamer.com","ISSLIVE");
+    let retries = 0;
+    const maxRetries = 20;
 
-      client.addListener({
-        onStatusChange:function(status){
-          if(status.indexOf("CONNECTED")===0) setLsStatus("online");
-          else if(status.indexOf("DISCONNECTED")===0) setLsStatus("offline");
-          else setLsStatus("connecting");
+    function tryConnect(){
+      // The Lightstreamer Web SDK exposes a global named "Ls" (or sometimes "lightstreamer")
+      const Ls = window.Ls || window.lightstreamer;
+      if(!Ls || !Ls.LightstreamerClient){
+        retries++;
+        if(retries < maxRetries){
+          setTimeout(tryConnect, 500);
+        } else {
+          console.warn("[Lightstreamer] global Ls not found after",maxRetries,"retries");
+          setLsStatus("library-missing");
         }
-      });
+        return;
+      }
 
-      client.connect();
+      try {
+        console.log("[Lightstreamer] Connecting to push.lightstreamer.com / ISSLIVE...");
+        client = new Ls.LightstreamerClient("https://push.lightstreamer.com","ISSLIVE");
 
-      const symbols = Object.keys(TELEMETRY);
-      sub = new lightstreamer.Subscription("MERGE", symbols, ["TimeStamp","Value"]);
-      sub.setRequestedSnapshot("yes");
-      sub.addListener({
-        onItemUpdate:function(update){
-          const itemName = update.getItemName();
-          const value = update.getValue("Value");
-          const ts = update.getValue("TimeStamp");
-          setTelemetry(function(prev){
-            return Object.assign({},prev,{[itemName]:{value:value,ts:ts}});
-          });
-          // Accumulate history for charted symbols
-          if(TELEMETRY[itemName] && TELEMETRY[itemName].chart){
-            const numV = parseFloat(value);
-            if(!isNaN(numV)){
-              setHistory(function(prev){
-                const arr = (prev[itemName] || []).concat([{t:Date.now(), v:numV}]);
-                return Object.assign({}, prev, {[itemName]: arr.slice(-60)});
-              });
+        client.addListener({
+          onStatusChange: function(status){
+            console.log("[Lightstreamer] status:", status);
+            if(status.indexOf("CONNECTED") === 0) setLsStatus("online");
+            else if(status.indexOf("DISCONNECTED") === 0) setLsStatus("offline");
+            else if(status.indexOf("STALLED") === 0) setLsStatus("stalled");
+            else setLsStatus("connecting");
+          },
+          onServerError: function(code, msg){
+            console.error("[Lightstreamer] server error:", code, msg);
+            setLsStatus("error");
+          }
+        });
+
+        client.connect();
+
+        const symbols = Object.keys(TELEMETRY);
+        console.log("[Lightstreamer] Subscribing to", symbols.length, "symbols");
+        sub = new Ls.Subscription("MERGE", symbols, ["TimeStamp","Value"]);
+        sub.setRequestedSnapshot("yes");
+        sub.setRequestedMaxFrequency(1.0); // 1 update per sec max
+        sub.addListener({
+          onSubscription: function(){
+            console.log("[Lightstreamer] subscribed OK");
+          },
+          onSubscriptionError: function(code, msg){
+            console.error("[Lightstreamer] subscription error:", code, msg);
+          },
+          onItemUpdate: function(update){
+            const itemName = update.getItemName();
+            const value = update.getValue("Value");
+            const ts = update.getValue("TimeStamp");
+            setTelemetry(function(prev){
+              return Object.assign({},prev,{[itemName]:{value:value,ts:ts}});
+            });
+            // Accumulate history for charted symbols
+            if(TELEMETRY[itemName] && TELEMETRY[itemName].chart){
+              const numV = parseFloat(value);
+              if(!isNaN(numV)){
+                setHistory(function(prev){
+                  const arr = (prev[itemName] || []).concat([{t:Date.now(), v:numV}]);
+                  return Object.assign({}, prev, {[itemName]: arr.slice(-60)});
+                });
+              }
             }
           }
-        }
-      });
-      client.subscribe(sub);
-    } catch(e) {
-      console.error("Lightstreamer error:",e);
-      setLsStatus("error");
+        });
+        client.subscribe(sub);
+      } catch(e) {
+        console.error("[Lightstreamer] init error:",e);
+        setLsStatus("error");
+      }
     }
+
+    tryConnect();
+
     return function(){
       try { if(client) client.disconnect(); } catch(e){}
     };
@@ -820,17 +852,18 @@ function StationCommander() {
           </div>
           <div style={{position:"relative",paddingBottom:"56.25%",background:"#000",borderRadius:3,overflow:"hidden"}}>
             <iframe
-              src="https://www.youtube-nocookie.com/embed/P9C25Un7xaM?autoplay=1&mute=1&rel=0&modestbranding=1"
+              src="https://www.youtube.com/embed/live_stream?channel=UCLA_DiR1FfKNvjuUpBHmylQ&autoplay=1&mute=1"
               style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:0}}
               allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
               allowFullScreen
+              referrerPolicy="strict-origin-when-cross-origin"
               title="ISS Live Stream"
             />
           </div>
           <div style={{marginTop:6,fontSize:9,color:"#6e7681",display:"flex",justifyContent:"space-between",gap:8,flexWrap:"wrap"}}>
             <span>Alternative feeds:</span>
             <span>
-              <a href="https://www.youtube.com/watch?v=P9C25Un7xaM" target="_blank" rel="noopener">NASA LIVE</a>
+              <a href="https://www.youtube.com/@NASA/live" target="_blank" rel="noopener">NASA YouTube</a>
               {" · "}
               <a href="https://isslivenow.com/" target="_blank" rel="noopener">isslivenow.com</a>
               {" · "}
@@ -862,6 +895,152 @@ function StationCommander() {
             <div style={{fontSize:9,color:"#6e7681"}}>
               Real ISS telemetry streamed from NASA's Mission Control at JSC via <a href="https://lightstreamer.com/customer-story/how-nasa-is-using-lightstreamer/" target="_blank" rel="noopener">Lightstreamer</a>. Symbol dictionary: <a href="https://iss-mimic.github.io/Mimic/" target="_blank" rel="noopener">ISS Mimic project</a> (MIT license). Position via <a href="https://wheretheiss.at/w/developer" target="_blank" rel="noopener">wheretheiss.at</a>.
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ COMPREHENSIVE COMMUNICATIONS SECTION ═══ */}
+      <div style={{marginBottom:10}}>
+        <div className="console-card" style={{borderLeft:"3px solid #58a6ff"}}>
+          <div className="console-header">
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{color:"#58a6ff",fontSize:14}}>⌁</span>
+              <span className="console-tag" style={{color:"#58a6ff",background:"#58a6ff15",border:"1px solid #58a6ff33"}}>CATO / INCO — FULL COMMS</span>
+              <span style={{color:"#8b949e",fontSize:10}}>Communications and Tracking Officer · Instrumentation & Comms</span>
+            </div>
+            <span style={{fontSize:9,color:"#6e7681"}}>S-Band · Ku-Band · Ka-Band · UHF · TDRS · Optical</span>
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10}}>
+
+            {/* S-Band Subsystem */}
+            <div className="subcard">
+              <div style={{fontSize:10,color:"#58a6ff",fontWeight:700,marginBottom:6,letterSpacing:1}}>▸ S-BAND SUBSYSTEM</div>
+              <div style={{fontSize:9,color:"#6e7681",marginBottom:8}}>2.0–2.3 GHz · Voice/TT&C · ~192 kbps</div>
+              <GroupBlock title="Active String" symbols={["USLAB000092"]} tm={tm} tmNum={tmNum}/>
+              <GroupBlock title="RFG-1 (Stbd)" symbols={["S1000009","S1000004","S1000005"]} tm={tm} tmNum={tmNum}/>
+              <GroupBlock title="RFG-2 (Port)" symbols={["P1000007","P1000004","P1000005"]} tm={tm} tmNum={tmNum}/>
+              <div style={{marginTop:8,padding:"5px 7px",background:"#58a6ff08",border:"1px solid #58a6ff22",borderRadius:3,fontSize:9}}>
+                <div style={{color:"#8b949e"}}>Function: <span style={{color:"#c9d1d9"}}>Voice + low-rate telemetry</span></div>
+                <div style={{color:"#8b949e"}}>Antenna: <span style={{color:"#c9d1d9"}}>RFG (RF Group)</span></div>
+                <div style={{color:"#8b949e"}}>Relay: <span style={{color:"#3fb950"}}>TDRS-East/West</span></div>
+              </div>
+            </div>
+
+            {/* Ku-Band Subsystem */}
+            <div className="subcard">
+              <div style={{fontSize:10,color:"#58a6ff",fontWeight:700,marginBottom:6,letterSpacing:1}}>▸ Ku-BAND SUBSYSTEM</div>
+              <div style={{fontSize:9,color:"#6e7681",marginBottom:8}}>13.775 GHz · Video/Science · 50 Mbps</div>
+              <GroupBlock title="SGANT Pointing" symbols={["Z1000013","Z1000014","Z1000015"]} tm={tm} tmNum={tmNum}/>
+              <GroupBlock title="Video Downlink Channels" symbols={["USLAB000088","USLAB000089","USLAB000090","USLAB000091"]} tm={tm} tmNum={tmNum}/>
+              <GroupBlock title="Video Source Routing" symbols={["USLAB000095","USLAB000096","USLAB000097","USLAB000098"]} tm={tm} tmNum={tmNum}/>
+              <div style={{marginTop:8,padding:"5px 7px",background:"#58a6ff08",border:"1px solid #58a6ff22",borderRadius:3,fontSize:9}}>
+                <div style={{color:"#8b949e"}}>Function: <span style={{color:"#c9d1d9"}}>HD video + science data</span></div>
+                <div style={{color:"#8b949e"}}>Antenna: <span style={{color:"#c9d1d9"}}>SGANT (Z1 truss)</span></div>
+                <div style={{color:"#8b949e"}}>Relay: <span style={{color:"#3fb950"}}>TDRS-East/West/Ka</span></div>
+              </div>
+            </div>
+
+            {/* UHF + Audio + Ka-Band */}
+            <div className="subcard">
+              <div style={{fontSize:10,color:"#58a6ff",fontWeight:700,marginBottom:6,letterSpacing:1}}>▸ UHF · AUDIO · Ka-BAND</div>
+              <div style={{fontSize:9,color:"#6e7681",marginBottom:8}}>UHF EVA · S2S radios · ILLUMA-T</div>
+              <GroupBlock title="Space-to-Space (UHF)" symbols={["USLAB000099","USLAB000100","USLAB000101"]} tm={tm} tmNum={tmNum}/>
+              <GroupBlock title="Internal Audio Controllers" symbols={["USLAB000093","USLAB000094"]} tm={tm} tmNum={tmNum}/>
+              <div style={{marginTop:8,padding:"5px 7px",background:"#58a6ff08",border:"1px solid #58a6ff22",borderRadius:3,fontSize:9}}>
+                <div style={{color:"#8b949e"}}>UHF use: <span style={{color:"#c9d1d9"}}>EVA suit comms (414 MHz)</span></div>
+                <div style={{color:"#8b949e"}}>S2S: <span style={{color:"#c9d1d9"}}>Visiting vehicle comms</span></div>
+                <div style={{color:"#8b949e"}}>Ka-Band: <span style={{color:"#c9d1d9"}}>ILLUMA-T optical (1.2 Gbps)</span></div>
+                <div style={{color:"#8b949e"}}>Audio: <span style={{color:"#3fb950"}}>IAC dual-redundant</span></div>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Comms infrastructure overview */}
+          <div style={{marginTop:10,padding:"8px 10px",background:"#161b22",border:"1px solid #21262d",borderRadius:3}}>
+            <div style={{fontSize:10,color:"#58a6ff",fontWeight:700,marginBottom:6,letterSpacing:1}}>▸ COMMS INFRASTRUCTURE OVERVIEW</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:6,fontSize:9}}>
+              <div style={{padding:"5px 7px",background:"#0a0e13",borderLeft:"2px solid #58a6ff",borderRadius:2}}>
+                <div style={{color:"#58a6ff",fontWeight:700}}>TDRS Constellation</div>
+                <div style={{color:"#8b949e"}}>3 active satellites in GEO</div>
+                <div style={{color:"#8b949e"}}>~80% orbit coverage</div>
+                <div style={{color:"#8b949e"}}>White Sands ground</div>
+              </div>
+              <div style={{padding:"5px 7px",background:"#0a0e13",borderLeft:"2px solid #3fb950",borderRadius:2}}>
+                <div style={{color:"#3fb950",fontWeight:700}}>S-Band</div>
+                <div style={{color:"#8b949e"}}>2.0–2.3 GHz</div>
+                <div style={{color:"#8b949e"}}>Voice + TT&C</div>
+                <div style={{color:"#8b949e"}}>Always-on safety link</div>
+              </div>
+              <div style={{padding:"5px 7px",background:"#0a0e13",borderLeft:"2px solid #d29922",borderRadius:2}}>
+                <div style={{color:"#d29922",fontWeight:700}}>Ku-Band</div>
+                <div style={{color:"#8b949e"}}>13.775 GHz · 50 Mbps</div>
+                <div style={{color:"#8b949e"}}>HD video + science</div>
+                <div style={{color:"#8b949e"}}>Steerable SGANT (Z1)</div>
+              </div>
+              <div style={{padding:"5px 7px",background:"#0a0e13",borderLeft:"2px solid #a371f7",borderRadius:2}}>
+                <div style={{color:"#a371f7",fontWeight:700}}>Ka-Band (ILLUMA-T)</div>
+                <div style={{color:"#8b949e"}}>25.5–27 GHz</div>
+                <div style={{color:"#8b949e"}}>Optical 1.2 Gbps</div>
+                <div style={{color:"#8b949e"}}>LCRD relay (2023+)</div>
+              </div>
+              <div style={{padding:"5px 7px",background:"#0a0e13",borderLeft:"2px solid #f0883e",borderRadius:2}}>
+                <div style={{color:"#f0883e",fontWeight:700}}>UHF (EVA)</div>
+                <div style={{color:"#8b949e"}}>414.2 MHz</div>
+                <div style={{color:"#8b949e"}}>EMU suit comms</div>
+                <div style={{color:"#8b949e"}}>~4 kbps voice/biomed</div>
+              </div>
+              <div style={{padding:"5px 7px",background:"#0a0e13",borderLeft:"2px solid #f85149",borderRadius:2}}>
+                <div style={{color:"#f85149",fontWeight:700}}>Lyndon B. Johnson</div>
+                <div style={{color:"#8b949e"}}>MCC-H Houston</div>
+                <div style={{color:"#8b949e"}}>1.3s round-trip</div>
+                <div style={{color:"#8b949e"}}>24/7 flight ops</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ UPCOMING EVENTS ═══ */}
+      <div style={{marginBottom:10}}>
+        <div className="console-card" style={{borderLeft:"3px solid #d29922"}}>
+          <div className="console-header">
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{color:"#d29922",fontSize:14}}>◷</span>
+              <span className="console-tag" style={{color:"#d29922",background:"#d2992215",border:"1px solid #d2992233"}}>UPCOMING</span>
+              <span style={{color:"#8b949e",fontSize:10}}>Scheduled events · launches · arrivals · departures · EVAs</span>
+            </div>
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:8}}>
+            {[
+              {date:"Apr 8, 2026",time:"~14:00 UTC",type:"ARRIVAL",color:"#d29922",title:"Cygnus XL (NG-23) capture",desc:"Northrop Grumman Cygnus enhanced cargo. Capture by Canadarm2, berthing at Unity Nadir CBM.",vehicle:"Cygnus XL"},
+              {date:"Apr 10, 2026",time:"~09:30 UTC",type:"REBOOST",color:"#a371f7",title:"Progress MS-30 reboost burn",desc:"Orbital reboost using Progress thrusters. Targets ~1.5 km altitude raise to compensate for atmospheric drag.",vehicle:"Progress MS-30"},
+              {date:"Apr 15, 2026",time:"~06:45 UTC",type:"DEPARTURE",color:"#f85149",title:"Soyuz MS-26 undocking & landing",desc:"Three-cosmonaut rotation. Undocking from Rassvet Nadir, deorbit burn, landing in Kazakhstan steppe.",vehicle:"Soyuz MS-26"},
+              {date:"Apr 22, 2026",time:"~12:00 UTC",type:"EVA",color:"#4dd0e1",title:"USOS EVA #91",desc:"Spacewalk to install IROSA solar array mounting bracket on P4 truss. Williams (EV1) + Hathaway (EV2). ~6.5 hr duration.",vehicle:"EMU 3008/3013"},
+              {date:"May 2, 2026",time:"~03:15 UTC",type:"LAUNCH",color:"#3fb950",title:"SpaceX Crew-13 launch",desc:"Falcon 9 / Dragon C214 from LC-39A. New international crew for Expedition 75 handover.",vehicle:"Crew Dragon"},
+              {date:"May 4, 2026",time:"~07:30 UTC",type:"DOCKING",color:"#3fb950",title:"Crew-13 Dragon docking",desc:"Autonomous rendezvous and docking at Harmony Zenith IDA-3. Hatch opening ~2 hr after capture.",vehicle:"Crew Dragon"},
+              {date:"May 12, 2026",time:"~18:00 UTC",type:"DEPARTURE",color:"#f85149",title:"Crew-12 Dragon undocking",desc:"Crew handover complete. Undocking from Harmony Forward, splashdown off Florida coast ~30 hours later.",vehicle:"Dragon Freedom"},
+              {date:"Jun 2026",time:"TBD",type:"LAUNCH",color:"#d29922",title:"Progress MS-32 launch",desc:"Roscosmos cargo resupply from Baikonur. Carries propellant, water, food, and science payloads.",vehicle:"Progress MS-32"},
+            ].map(function(e,i){return (
+              <div key={i} style={{padding:"8px 10px",background:"#161b22",border:"1px solid #21262d",borderLeft:"2px solid "+e.color,borderRadius:3}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:4}}>
+                  <div>
+                    <div style={{fontSize:10,color:e.color,fontWeight:700,letterSpacing:0.5}}>{e.date}</div>
+                    <div style={{fontSize:8,color:"#6e7681",marginTop:1}}>{e.time}</div>
+                  </div>
+                  <span style={{fontSize:8,color:e.color,padding:"2px 6px",border:"1px solid "+e.color+"55",borderRadius:2,fontWeight:700,letterSpacing:0.5}}>{e.type}</span>
+                </div>
+                <div style={{fontSize:11,color:"#e6edf3",fontWeight:600,marginBottom:3}}>{e.title}</div>
+                <div style={{fontSize:9,color:"#8b949e",lineHeight:1.4,marginBottom:4}}>{e.desc}</div>
+                <div style={{fontSize:8,color:"#6e7681"}}>Vehicle: <span style={{color:"#c9d1d9"}}>{e.vehicle}</span></div>
+              </div>
+            );})}
+          </div>
+
+          <div style={{marginTop:10,fontSize:9,color:"#6e7681",textAlign:"center",padding:"6px",background:"#0a0e13",border:"1px solid #21262d",borderRadius:3}}>
+            Schedule subject to change · Source: NASA MCC-H Flight Operations · Roscosmos TsUP · Last update: April 2026
           </div>
         </div>
       </div>
