@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Station Commander — ISS Mission Control Dashboard</title>
+<meta name="description" content="Real-time ISS mission control dashboard organized by flight console (TOPO, ETHOS, SPARTAN, ADCO, VVO, CAPCOM, INCO). Live NASA telemetry via Lightstreamer.">
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  ::-webkit-scrollbar{width:8px;height:8px}
+  ::-webkit-scrollbar-track{background:#0d1117}
+  ::-webkit-scrollbar-thumb{background:#21262d;border-radius:4px}
+  ::-webkit-scrollbar-thumb:hover{background:#30363d}
+  html,body{
+    background:#0d1117;
+    font-family:ui-monospace,SFMono-Regular,'SF Mono',Menlo,Consolas,'Liberation Mono',monospace;
+    color:#c9d1d9;
+    min-height:100vh;
+    font-size:13px;
+    line-height:1.5;
+    -webkit-font-smoothing:antialiased;
+    -moz-osx-font-smoothing:grayscale;
+  }
+  body{overflow-x:hidden}
+  @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:0}}
+  @keyframes dot{0%,100%{opacity:1}50%{opacity:.3}}
+  @keyframes pulse{0%,100%{opacity:.3}50%{opacity:1}}
+  #root{min-height:100vh}
+  .btn{cursor:pointer;font-family:inherit;transition:background .15s,border-color .15s,color .15s}
+  .caret{display:inline-block;width:8px;height:14px;background:#58a6ff;animation:blink 1.1s infinite;vertical-align:middle;margin-left:2px}
+  a{color:#58a6ff;text-decoration:none}
+  a:hover{text-decoration:underline}
+  .console-card{
+    border:1px solid #21262d;
+    background:#0f141a;
+    border-radius:6px;
+    padding:14px 16px;
+    transition:border-color .2s;
+  }
+  .console-card:hover{border-color:#30363d}
+  .console-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    margin-bottom:10px;
+    padding-bottom:8px;
+    border-bottom:1px solid #21262d;
+  }
+  .console-tag{
+    font-size:10px;
+    font-weight:700;
+    letter-spacing:1.5px;
+    padding:2px 7px;
+    border-radius:3px;
+    text-transform:uppercase;
+  }
+  .status-nom{color:#3fb950}
+  .status-cau{color:#d29922}
+  .status-crit{color:#f85149}
+  .metric-value{
+    font-variant-numeric:tabular-nums;
+    font-weight:600;
+  }
+  .progress-track{
+    height:5px;
+    background:#21262d;
+    border-radius:3px;
+    overflow:hidden;
+    margin-top:5px;
+  }
+  .progress-fill{
+    height:100%;
+    border-radius:3px;
+    transition:width .5s ease-out;
+  }
+  details{cursor:pointer}
+  summary{list-style:none;outline:none}
+  summary::-webkit-details-marker{display:none}
+</style>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://unpkg.com/lightstreamer-client-web@9.2.0/lightstreamer.min.js"></script>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-type="module">
+const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+/* ═══════════════════════════════════════════════════════════════════════
+   STATION COMMANDER — ISS MISSION CONTROL DASHBOARD
+   Organized by flight console (NASA MCC-H Houston)
+   Real telemetry via Lightstreamer (push.lightstreamer.com / ISSLIVE)
+   ═══════════════════════════════════════════════════════════════════════ */
+
+// ─── FLIGHT CONSOLE DEFINITIONS ────────────────────────────────────────
+// Real NASA MCC-H flight controller positions, each monitors specific systems
+const CONSOLES = {
+  TOPO: {
+    name:"TOPO", fullName:"Trajectory Operations Officer",
+    color:"#58a6ff", icon:"▲",
+    scope:"Orbit, trajectory, ground track, rendezvous & docking geometry",
+  },
+  ETHOS: {
+    name:"ETHOS", fullName:"Environmental & Thermal Operating Systems",
+    color:"#3fb950", icon:"◈",
+    scope:"Atmosphere, water recovery, ARS/OGS, temperature, humidity, fire detection",
+  },
+  SPARTAN: {
+    name:"SPARTAN", fullName:"Station Power, Articulation, Thermal & Analysis",
+    color:"#d29922", icon:"⚡",
+    scope:"Electrical power (solar arrays, batteries), thermal control loops",
+  },
+  ADCO: {
+    name:"ADCO", fullName:"Attitude Determination & Control Officer",
+    color:"#a371f7", icon:"⊙",
+    scope:"CMGs, attitude, SARJ, orbital orientation",
+  },
+  VVO: {
+    name:"VVO", fullName:"Visiting Vehicle Officer",
+    color:"#f0883e", icon:"⬢",
+    scope:"Docked spacecraft, rendezvous ops, resupply timeline",
+  },
+  CAPCOM: {
+    name:"CAPCOM", fullName:"Capsule Communicator",
+    color:"#f85149", icon:"◉",
+    scope:"Direct voice comms with crew, crew activities & schedule",
+  },
+  INCO: {
+    name:"INCO", fullName:"Instrumentation & Communications Officer",
+    color:"#58a6ff", icon:"⌁",
+    scope:"S/Ku/Ka-band, TDRS relay, voice loops, video & data downlink",
+  },
+  ROBO: {
+    name:"ROBO", fullName:"Robotics Operations Systems Officer",
+    color:"#79c0ff", icon:"▣",
+    scope:"Canadarm2, SPDM Dextre, JEMRMS, ERA robotic arms",
+  },
+};
+
+// ─── LIGHTSTREAMER TELEMETRY SYMBOLS (NASA ISSLIVE public feed) ─────────
+// Source: https://github.com/ISS-Mimic/Mimic — full public dictionary
+const TELEMETRY = {
+  // ETHOS — Environmental
+  "NODE3000005": {label:"Cabin Pressure",unit:"mmHg",console:"ETHOS",nom:[710,790]},
+  "NODE3000008": {label:"Cabin Temperature",unit:"°F",console:"ETHOS",nom:[65,80]},
+  "NODE3000011": {label:"O₂ Partial Press.",unit:"mmHg",console:"ETHOS",nom:[145,180]},
+  "NODE3000012": {label:"CO₂ Partial Press.",unit:"mmHg",console:"ETHOS",nom:[0,5]},
+  "NODE3000017": {label:"O₂ Generator",unit:"state",console:"ETHOS"},
+  "NODE3000018": {label:"O₂ Production",unit:"lbm/hr",console:"ETHOS"},
+  "NODE3000001": {label:"H₂O Proc. State",unit:"state",console:"ETHOS"},
+  "NODE3000002": {label:"H₂O Proc. Step",unit:"",console:"ETHOS"},
+  "NODE3000003": {label:"Waste Water Tank",unit:"%",console:"ETHOS"},
+  "NODE3000004": {label:"Clean Water Tank",unit:"%",console:"ETHOS"},
+
+  // SPARTAN — Power
+  "USLAB000058": {label:"Total Station Power",unit:"kW",console:"SPARTAN"},
+  "S0000001": {label:"Power Ch 1A Voltage",unit:"V",console:"SPARTAN",nom:[140,165]},
+  "S0000002": {label:"Power Ch 1A Current",unit:"A",console:"SPARTAN"},
+  "S0000003": {label:"Power Ch 1B Voltage",unit:"V",console:"SPARTAN",nom:[140,165]},
+  "S0000004": {label:"Power Ch 1B Current",unit:"A",console:"SPARTAN"},
+  "S0000005": {label:"Power Ch 2A Voltage",unit:"V",console:"SPARTAN",nom:[140,165]},
+  "S0000006": {label:"Power Ch 2A Current",unit:"A",console:"SPARTAN"},
+  "S0000007": {label:"Power Ch 2B Voltage",unit:"V",console:"SPARTAN",nom:[140,165]},
+  "S0000008": {label:"Power Ch 2B Current",unit:"A",console:"SPARTAN"},
+  "S4000001": {label:"S4 Solar Array Angle",unit:"°",console:"SPARTAN"},
+  "P4000001": {label:"P4 Solar Array Angle",unit:"°",console:"SPARTAN"},
+  "S6000001": {label:"S6 Solar Array Angle",unit:"°",console:"SPARTAN"},
+  "P6000001": {label:"P6 Solar Array Angle",unit:"°",console:"SPARTAN"},
+
+  // SPARTAN — Thermal
+  "S0000013": {label:"S Thermal Radiator",unit:"°F",console:"SPARTAN"},
+  "P0000007": {label:"P Thermal Radiator",unit:"°F",console:"SPARTAN"},
+
+  // ADCO — Attitude & CMG
+  "USLAB000032": {label:"CMG 1 Wheel Speed",unit:"rpm",console:"ADCO",nom:[6000,6700]},
+  "USLAB000033": {label:"CMG 1 Current",unit:"A",console:"ADCO"},
+  "USLAB000034": {label:"CMG 1 Vibration",unit:"g",console:"ADCO"},
+  "USLAB000038": {label:"CMG 2 Wheel Speed",unit:"rpm",console:"ADCO",nom:[6000,6700]},
+  "USLAB000044": {label:"CMG 3 Wheel Speed",unit:"rpm",console:"ADCO",nom:[6000,6700]},
+  "USLAB000050": {label:"CMG 4 Wheel Speed",unit:"rpm",console:"ADCO",nom:[6000,6700]},
+  "USLAB000018": {label:"US Attitude Yaw",unit:"°",console:"ADCO"},
+  "USLAB000019": {label:"US Attitude Pitch",unit:"°",console:"ADCO"},
+  "USLAB000020": {label:"US Attitude Roll",unit:"°",console:"ADCO"},
+  "USLAB000059": {label:"Total ISS Mass",unit:"kg",console:"ADCO"},
+  "USLAB000060": {label:"Station Mode",unit:"",console:"ADCO"},
+  "USLAB000061": {label:"CMG Att. Control",unit:"",console:"ADCO"},
+  "USLAB000062": {label:"ISS Att. Control",unit:"",console:"ADCO"},
+
+  // INCO — Comms
+  "AIRLOCK000049": {label:"Ku-Band Transmit",unit:"state",console:"INCO"},
+  "NODE3000001B": {label:"S-Band String 1",unit:"state",console:"INCO"},
+
+  // ROBO
+  "CSASSRMS001": {label:"SSRMS Base Location",unit:"",console:"ROBO"},
+  "CSASSRMS002": {label:"SSRMS Payload",unit:"",console:"ROBO"},
+  "CSAMT000001": {label:"SPDM 1 Payload",unit:"",console:"ROBO"},
+  "CSAMT000002": {label:"SPDM 2 Payload",unit:"",console:"ROBO"},
+  "CSAMBS000001": {label:"MBS Position",unit:"",console:"ROBO"},
+
+  // Signal status
+  "TIME_000001": {label:"AOS/LOS",unit:"",console:"INCO"},
+  "TIME_000002": {label:"Sun Visibility",unit:"",console:"SPARTAN"},
+};
+
+// ─── LAND MASK ─────────────────────────────────────────────────────────
+const LAND_REGIONS = [
+  {latMin:25,latMax:50,lonMin:-130,lonMax:-65},{latMin:50,latMax:72,lonMin:-170,lonMax:-55},
+  {latMin:15,latMax:30,lonMin:-118,lonMax:-85},{latMin:8,latMax:22,lonMin:-90,lonMax:-60},
+  {latMin:-5,latMax:12,lonMin:-82,lonMax:-50},{latMin:-25,latMax:-5,lonMin:-75,lonMax:-35},
+  {latMin:-40,latMax:-25,lonMin:-72,lonMax:-48},{latMin:-55,latMax:-40,lonMin:-75,lonMax:-62},
+  {latMin:36,latMax:60,lonMin:-10,lonMax:30},{latMin:55,latMax:71,lonMin:5,lonMax:40},
+  {latMin:38,latMax:45,lonMin:-10,lonMax:5},{latMin:20,latMax:37,lonMin:-17,lonMax:35},
+  {latMin:0,latMax:20,lonMin:-18,lonMax:50},{latMin:-15,latMax:0,lonMin:10,lonMax:42},
+  {latMin:-35,latMax:-15,lonMin:15,lonMax:40},{latMin:40,latMax:55,lonMin:30,lonMax:60},
+  {latMin:50,latMax:72,lonMin:40,lonMax:180},{latMin:35,latMax:50,lonMin:60,lonMax:140},
+  {latMin:20,latMax:42,lonMin:65,lonMax:125},{latMin:5,latMax:20,lonMin:68,lonMax:92},
+  {latMin:-10,latMax:20,lonMin:95,lonMax:140},{latMin:30,latMax:42,lonMin:125,lonMax:145},
+  {latMin:12,latMax:38,lonMin:32,lonMax:62},{latMin:-40,latMax:-12,lonMin:114,lonMax:153},
+  {latMin:-47,latMax:-34,lonMin:166,lonMax:178},{latMin:60,latMax:83,lonMin:-55,lonMax:-15},
+  {latMin:50,latMax:59,lonMin:-11,lonMax:2},{latMin:-8,latMax:8,lonMin:95,lonMax:130},
+  {latMin:5,latMax:20,lonMin:117,lonMax:127},
+];
+const isLand = (lat,lon) => LAND_REGIONS.some(r => lat>=r.latMin && lat<=r.latMax && lon>=r.lonMin && lon<=r.lonMax);
+
+function simulateOrbit(t, inc, perMin, phase) {
+  phase = phase || 0;
+  var perMs = perMin*60*1000;
+  var frac = ((t+phase)%perMs)/perMs;
+  var rawLon = (frac*360+180)%360 - 180;
+  var earthRot = ((t/60000)*0.25)%360;
+  var lon = ((rawLon - earthRot + 540) % 360) - 180;
+  var lat = inc * Math.sin(frac*2*Math.PI);
+  return {latitude:lat, longitude:lon};
+}
+
+// ─── CREW & VISITING VEHICLES ──────────────────────────────────────────
+const CREW = [
+  {name:"Sergey Kud-Sverchkov",role:"ISS Commander",flag:"RU",agency:"Roscosmos",vehicle:"Soyuz MS-27",days:198},
+  {name:"Sergei Mikayev",role:"Flight Engineer",flag:"RU",agency:"Roscosmos",vehicle:"Soyuz MS-27",days:198},
+  {name:"Christopher Williams",role:"Flight Engineer",flag:"US",agency:"NASA",vehicle:"Crew-11 ext.",days:242},
+  {name:"Jessica Meir",role:"Crew-12 Commander",flag:"US",agency:"NASA",vehicle:"Crew-12 Dragon",days:50},
+  {name:"Jack Hathaway",role:"Crew-12 Pilot",flag:"US",agency:"NASA",vehicle:"Crew-12 Dragon",days:50},
+  {name:"Sophie Adenot",role:"Mission Specialist",flag:"FR",agency:"ESA",vehicle:"Crew-12 Dragon",days:50},
+  {name:"Andrey Fedyaev",role:"Mission Specialist",flag:"RU",agency:"Roscosmos",vehicle:"Crew-12 Dragon",days:50},
+];
+
+const VISITING_VEHICLES = [
+  {port:"Harmony Forward",vehicle:"Crew Dragon Freedom",mission:"Crew-12",arrived:"Feb 14, 2026",departure:"~Aug 2026",status:"DOCKED",type:"crew",color:"#3fb950"},
+  {port:"Harmony Zenith",vehicle:null,mission:"",arrived:"",departure:"",status:"AVAILABLE",type:"crew",color:"#6e7681"},
+  {port:"Unity Nadir",vehicle:"Cygnus XL",mission:"NG-23",arrived:"Expected Apr 8",departure:"~Jul 2026",status:"RESERVED",type:"cargo",color:"#d29922"},
+  {port:"Poisk Zenith",vehicle:"Soyuz MS-27",mission:"Expedition 74",arrived:"Sep 15, 2025",departure:"~Apr 15, 2026",status:"DOCKED",type:"crew",color:"#3fb950"},
+  {port:"Rassvet Nadir",vehicle:"Soyuz MS-28",mission:"Crew rotation",arrived:"Mar 28, 2026",departure:"~Sep 2026",status:"DOCKED",type:"crew",color:"#3fb950"},
+  {port:"Zvezda Aft",vehicle:"Progress MS-31",mission:"Resupply",arrived:"Mar 22, 2026",departure:"~Jun 2026",status:"DOCKED",type:"cargo",color:"#d29922"},
+  {port:"Nauka Nadir",vehicle:"Progress MS-30",mission:"Reboost Apr 10",arrived:"Jan 12, 2026",departure:"~May 2026",status:"DOCKED",type:"cargo",color:"#d29922"},
+];
+
+// ═══════════════════════════════════════════════════════════════════════
+//  MAIN COMPONENT
+// ═══════════════════════════════════════════════════════════════════════
+function StationCommander() {
+  const [iss, setIss] = useState(null);
+  const [time, setTime] = useState(Date.now());
+  const [issTrail, setIssTrail] = useState([]);
+  const [apiStatus, setApiStatus] = useState("connecting");
+  const [telemetry, setTelemetry] = useState({});
+  const [lsStatus, setLsStatus] = useState("connecting");
+  const lsClientRef = useRef(null);
+
+  // ─── ISS POSITION (wheretheiss.at) ─────────────────────────────────
+  const fetchISS = useCallback(function(){
+    fetch("https://api.wheretheiss.at/v1/satellites/25544")
+      .then(function(r){if(!r.ok)throw new Error();return r.json();})
+      .then(function(d){
+        setIss(Object.assign({},d,{live:true}));
+        setApiStatus("online");
+        setIssTrail(function(p){return p.slice(-300).concat([{lat:d.latitude,lon:d.longitude,t:Date.now()}]);});
+      })
+      .catch(function(){
+        setApiStatus("offline");
+        var s=simulateOrbit(Date.now(),51.64,92.68,0);
+        var d={latitude:s.latitude,longitude:s.longitude,altitude:408+Math.random()*5,velocity:27580+Math.random()*40,visibility:Math.random()>0.4?"daylight":"eclipsed",live:false};
+        setIss(d);
+        setIssTrail(function(p){return p.slice(-300).concat([{lat:d.latitude,lon:d.longitude,t:Date.now()}]);});
+      });
+  },[]);
+
+  // ─── LIGHTSTREAMER LIVE TELEMETRY ──────────────────────────────────
+  useEffect(function(){
+    if(typeof lightstreamer === "undefined"){
+      setLsStatus("library-missing");
+      return;
+    }
+    try {
+      const client = new lightstreamer.LightstreamerClient("https://push.lightstreamer.com","ISSLIVE");
+      lsClientRef.current = client;
+
+      client.addListener({
+        onStatusChange:function(status){
+          if(status.indexOf("CONNECTED")===0) setLsStatus("online");
+          else if(status.indexOf("DISCONNECTED")===0) setLsStatus("offline");
+          else setLsStatus("connecting");
+        }
+      });
+
+      client.connect();
+
+      const symbols = Object.keys(TELEMETRY);
+      const sub = new lightstreamer.Subscription("MERGE", symbols, ["TimeStamp","Value"]);
+      sub.setRequestedSnapshot("yes");
+      sub.addListener({
+        onItemUpdate:function(update){
+          const itemName = update.getItemName();
+          const value = update.getValue("Value");
+          const ts = update.getValue("TimeStamp");
+          setTelemetry(function(prev){
+            return Object.assign({},prev,{[itemName]:{value:value,ts:ts}});
+          });
+        }
+      });
+      client.subscribe(sub);
+
+      return function(){
+        try { client.disconnect(); } catch(e){}
+      };
+    } catch(e) {
+      console.error("Lightstreamer error:",e);
+      setLsStatus("error");
+    }
+  },[]);
+
+  useEffect(function(){
+    fetchISS();
+    var i=setInterval(function(){fetchISS();},5000);
+    return function(){clearInterval(i);};
+  },[fetchISS]);
+  useEffect(function(){var i=setInterval(function(){setTime(Date.now());},1000);return function(){clearInterval(i);};},[]);
+
+  const landDots = useMemo(function(){
+    var d=[];
+    for(var la=-58;la<=74;la+=2)for(var lo=-178;lo<=178;lo+=2)if(isLand(la,lo))d.push({la:la,lo:lo});
+    return d;
+  },[]);
+
+  // Elapsed since ISS continuous habitation (Nov 2, 2000)
+  const contHab = new Date("2000-11-02T09:21:00Z").getTime();
+  const dfHab = time - contHab;
+  const habDays = Math.floor(dfHab/86400000);
+
+  const pad=function(n){return String(n).padStart(2,"0");};
+  const fmtCoord=function(v,p,n){return v!=null?Math.abs(v).toFixed(4)+"\u00b0 "+(v>=0?p:n):"---";};
+
+  // Get telemetry value helper
+  const tm = function(sym,fallback){
+    if(telemetry[sym] && telemetry[sym].value && telemetry[sym].value !== "n/a"){
+      return telemetry[sym].value;
+    }
+    return fallback || "---";
+  };
+  const tmNum = function(sym,fallback,decimals){
+    const v = tm(sym);
+    if(v === "---") return fallback||"---";
+    const n = parseFloat(v);
+    if(isNaN(n)) return fallback||"---";
+    return decimals!=null ? n.toFixed(decimals) : n.toString();
+  };
+
+  // ─── DERIVED METRICS (fallback values when LS is offline) ─────────
+  const hasLive = lsStatus === "online" && Object.keys(telemetry).length > 0;
+
+  return (
+    <div style={{minHeight:"100vh",color:"#c9d1d9",padding:"0",maxWidth:1500,margin:"0 auto"}}>
+
+      {/* ═══ TOP NAV ═══ */}
+      <div style={{borderBottom:"1px solid #21262d",padding:"14px 22px",display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:10,background:"#0d1117",position:"sticky",top:0,zIndex:100}}>
+        <div style={{display:"flex",alignItems:"center",gap:12,fontSize:13}}>
+          <a href="https://rmayormartins.github.io" target="_blank" rel="noopener" style={{color:"#58a6ff",fontWeight:500}}>Ramon Mayor Martins</a>
+          <span style={{color:"#8b949e"}}>~/station-commander</span>
+          <span style={{color:"#30363d"}}>·</span>
+          <a href="https://www.ifsc.edu.br" target="_blank" rel="noopener" style={{color:"#8b949e",fontSize:12}}>IFSC</a>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:12,fontSize:12,color:"#8b949e"}}>
+          <span style={{display:"flex",alignItems:"center",gap:5}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:lsStatus==="online"?"#3fb950":"#d29922",animation:"dot 1.8s infinite",display:"inline-block"}}/>
+            <span style={{color:lsStatus==="online"?"#3fb950":"#d29922"}}>
+              LS:{lsStatus==="online"?"LIVE":"WAIT"}
+            </span>
+          </span>
+          <span style={{color:"#30363d"}}>·</span>
+          <span style={{display:"flex",alignItems:"center",gap:5}}>
+            <span style={{width:6,height:6,borderRadius:"50%",background:apiStatus==="online"?"#3fb950":"#f0883e",animation:"dot 1.8s infinite",display:"inline-block"}}/>
+            <span style={{color:apiStatus==="online"?"#3fb950":"#f0883e"}}>POS:{apiStatus==="online"?"LIVE":"SIM"}</span>
+          </span>
+          <span style={{color:"#30363d"}}>·</span>
+          <span>{new Date(time).toISOString().slice(11,19)} UTC</span>
+        </div>
+      </div>
+
+      {/* ═══ TITLE ═══ */}
+      <div style={{padding:"26px 22px 18px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-end",flexWrap:"wrap",gap:14}}>
+          <div>
+            <h1 style={{fontSize:26,fontWeight:700,color:"#e6edf3",margin:"0 0 8px",letterSpacing:"-0.3px"}}>
+              Station Commander — ISS Mission Control
+            </h1>
+            <p style={{color:"#8b949e",fontSize:13,margin:0,lineHeight:1.5}}>
+              Live flight console dashboard · NASA MCC-H Houston layout · Real ISS telemetry via Lightstreamer
+              <span className="caret"/>
+            </p>
+          </div>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:10,color:"#8b949e",marginBottom:3,textTransform:"uppercase",letterSpacing:1}}>Continuous Habitation</div>
+            <div style={{fontSize:22,fontWeight:700,color:"#3fb950",lineHeight:1,fontVariantNumeric:"tabular-nums"}}>{habDays.toLocaleString()} days</div>
+            <div style={{fontSize:10,color:"#6e7681",marginTop:3}}>since Nov 2, 2000</div>
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ CONTENT WRAPPER ═══ */}
+      <div style={{padding:"0 22px 40px"}}>
+
+      {/* ═══ CONSOLE LEGEND BAR ═══ */}
+      <div style={{marginBottom:18,padding:"10px 14px",background:"#0f141a",border:"1px solid #21262d",borderRadius:6}}>
+        <div style={{fontSize:10,color:"#8b949e",marginBottom:8,textTransform:"uppercase",letterSpacing:1}}>▸ Flight Control Team — MCC-H Houston</div>
+        <div style={{display:"flex",flexWrap:"wrap",gap:10}}>
+          {Object.values(CONSOLES).map(function(c){return (
+            <div key={c.name} style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px",border:"1px solid "+c.color+"33",background:c.color+"0c",borderRadius:4}}>
+              <span style={{color:c.color,fontSize:12}}>{c.icon}</span>
+              <span style={{color:c.color,fontWeight:700,fontSize:11,letterSpacing:0.5}}>{c.name}</span>
+              <span style={{color:"#8b949e",fontSize:10}}>{c.fullName}</span>
+            </div>
+          );})}
+        </div>
+      </div>
+
+      {/* ═══ TOP ROW: TOPO (mapa compacto) + ETHOS + SPARTAN ═══ */}
+      <div style={{display:"grid",gridTemplateColumns:"1.4fr 1fr 1fr",gap:10,marginBottom:12}}>
+
+        {/* ─── TOPO — Trajectory ─── */}
+        <ConsoleCard console={CONSOLES.TOPO}>
+          <div style={{marginBottom:8,fontSize:10,color:"#8b949e"}}>
+            <span style={{color:"#58a6ff"}}>LAT</span> {fmtCoord(iss?iss.latitude:null,"N","S")}
+            <span style={{margin:"0 8px",color:"#30363d"}}>·</span>
+            <span style={{color:"#58a6ff"}}>LON</span> {fmtCoord(iss?iss.longitude:null,"E","W")}
+            <span style={{margin:"0 8px",color:"#30363d"}}>·</span>
+            <span style={{color:"#58a6ff"}}>ALT</span> {iss?iss.altitude.toFixed(1)+" km":"---"}
+            <span style={{margin:"0 8px",color:"#30363d"}}>·</span>
+            <span style={{color:"#58a6ff"}}>VEL</span> {iss?iss.velocity.toFixed(0)+" km/h":"---"}
+          </div>
+          <div style={{border:"1px solid #21262d",background:"#000",borderRadius:3,overflow:"hidden"}}>
+            <svg viewBox="0 0 720 300" style={{width:"100%",display:"block"}}>
+              <rect width="720" height="300" fill="#0a0e13"/>
+              {[-60,-30,0,30,60].map(function(la){return (
+                <line key={"la"+la} x1="0" y1={((90-la)/180)*300} x2="720" y2={((90-la)/180)*300} stroke="#21262d" strokeWidth="0.4" strokeDasharray={la===0?"none":"3,4"}/>
+              );})}
+              {[-120,-60,0,60,120].map(function(lo){return (
+                <line key={"lo"+lo} x1={((lo+180)/360)*720} y1="0" x2={((lo+180)/360)*720} y2="300" stroke="#21262d" strokeWidth="0.4" strokeDasharray={lo===0?"none":"3,4"}/>
+              );})}
+              {landDots.map(function(d){return <rect key={d.la+","+d.lo} x={((d.lo+180)/360)*720-0.5} y={((90-d.la)/180)*300-0.5} width="1" height="1" fill="#30363d"/>;})}
+
+              {/* Inclination band */}
+              <rect x="0" y={((90-51.64)/180)*300} width="720" height={((90-(-51.64))/180)*300-((90-51.64)/180)*300} fill="#58a6ff08" stroke="none"/>
+
+              {/* Trail */}
+              {issTrail.map(function(p,i){if(!i)return null;const q=issTrail[i-1];if(Math.abs(p.lon-q.lon)>100)return null;return (
+                <line key={"it"+i} x1={((q.lon+180)/360)*720} y1={((90-q.lat)/180)*300} x2={((p.lon+180)/360)*720} y2={((90-p.lat)/180)*300} stroke="#58a6ff" strokeWidth="1.2" opacity={0.15+(i/issTrail.length)*0.7}/>
+              );}).filter(Boolean)}
+
+              {/* Predicted trajectory */}
+              {iss && (function(){
+                const segs=[];
+                const inc=51.64;
+                const ratio=Math.max(-1,Math.min(1,iss.latitude/inc));
+                let phaseFromLat=Math.asin(ratio)/(2*Math.PI);
+                if(issTrail.length>=2){
+                  const prev=issTrail[issTrail.length-2];
+                  if(iss.latitude<prev.lat) phaseFromLat=0.5-phaseFromLat;
+                }
+                const points=[];
+                for(let k=0;k<=50;k++){
+                  const tFrac=k/50;
+                  const phaseT=(phaseFromLat+tFrac)%1;
+                  const lat=inc*Math.sin(phaseT*2*Math.PI);
+                  const groundDrift=tFrac*(-22.5);
+                  const orbitalLon=(iss.longitude+tFrac*360+groundDrift+540)%360-180;
+                  points.push({lat:lat,lon:orbitalLon});
+                }
+                for(let k=1;k<points.length;k++){
+                  const p=points[k],q=points[k-1];
+                  if(Math.abs(p.lon-q.lon)>180)continue;
+                  segs.push(
+                    <line key={"ipred"+k} x1={((q.lon+180)/360)*720} y1={((90-q.lat)/180)*300} x2={((p.lon+180)/360)*720} y2={((90-p.lat)/180)*300} stroke="#58a6ff" strokeWidth="0.8" strokeDasharray="3,3" opacity={0.45-(k/points.length)*0.35}/>
+                  );
+                }
+                return <g>{segs}</g>;
+              })()}
+
+              {iss && (
+                <g>
+                  <circle cx={((iss.longitude+180)/360)*720} cy={((90-iss.latitude)/180)*300} r="16" fill="#58a6ff22">
+                    <animate attributeName="r" values="10;20;10" dur="2.5s" repeatCount="indefinite"/>
+                  </circle>
+                  <circle cx={((iss.longitude+180)/360)*720} cy={((90-iss.latitude)/180)*300} r="4" fill="#58a6ff"/>
+                  <text x={((iss.longitude+180)/360)*720+8} y={((90-iss.latitude)/180)*300-5} fill="#58a6ff" fontSize="10" fontWeight="bold" fontFamily="monospace">ISS</text>
+                </g>
+              )}
+            </svg>
+          </div>
+          <div style={{marginTop:8,display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:6,fontSize:10}}>
+            <KV l="INCL" v="51.64°" c="#58a6ff"/>
+            <KV l="PERIOD" v="92.68m" c="#58a6ff"/>
+            <KV l="APOG" v="422 km" c="#58a6ff"/>
+            <KV l="PERIG" v="418 km" c="#58a6ff"/>
+          </div>
+        </ConsoleCard>
+
+        {/* ─── ETHOS — Life Support ─── */}
+        <ConsoleCard console={CONSOLES.ETHOS}>
+          <MetricWithBar label="Cabin Pressure" value={tm("NODE3000005","758.3")} unit="mmHg" pct={92} color="#3fb950"/>
+          <MetricWithBar label="O₂ Partial Press." value={tm("NODE3000011","165.4")} unit="mmHg" pct={82} color="#3fb950"/>
+          <MetricWithBar label="CO₂ Partial Press." value={tm("NODE3000012","2.8")} unit="mmHg" pct={35} color="#d29922"/>
+          <MetricWithBar label="Cabin Temperature" value={tm("NODE3000008","71.6")} unit="°F" pct={72} color="#3fb950"/>
+          <MetricWithBar label="Waste Water Tank" value={tm("NODE3000003","67.3")} unit="%" pct={67} color="#3fb950"/>
+          <MetricWithBar label="Clean Water Tank" value={tm("NODE3000004","88.1")} unit="%" pct={88} color="#3fb950"/>
+          <div style={{marginTop:8,padding:"6px 8px",background:"#3fb9500c",border:"1px solid #3fb95022",borderRadius:3,fontSize:9,color:"#8b949e"}}>
+            <div>O₂ Generator: <span style={{color:"#3fb950"}}>{tm("NODE3000017","PROCESS")}</span></div>
+            <div>H₂O Processor: <span style={{color:"#3fb950"}}>{tm("NODE3000001","PROCESS")}</span></div>
+          </div>
+        </ConsoleCard>
+
+        {/* ─── SPARTAN — Power ─── */}
+        <ConsoleCard console={CONSOLES.SPARTAN}>
+          <MetricWithBar label="Total Power Load" value={tmNum("USLAB000058","142.7",1)} unit="kW" pct={66} color="#d29922" sub="of 215 kW capacity"/>
+          <div style={{marginTop:6,display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,fontSize:10}}>
+            <KV l="1A V" v={tmNum("S0000001","151.2",1)+"V"} c="#d29922"/>
+            <KV l="1A I" v={tmNum("S0000002","42.1",1)+"A"} c="#d29922"/>
+            <KV l="1B V" v={tmNum("S0000003","150.8",1)+"V"} c="#d29922"/>
+            <KV l="1B I" v={tmNum("S0000004","41.7",1)+"A"} c="#d29922"/>
+            <KV l="2A V" v={tmNum("S0000005","151.5",1)+"V"} c="#d29922"/>
+            <KV l="2A I" v={tmNum("S0000006","43.8",1)+"A"} c="#d29922"/>
+            <KV l="2B V" v={tmNum("S0000007","151.0",1)+"V"} c="#d29922"/>
+            <KV l="2B I" v={tmNum("S0000008","42.5",1)+"A"} c="#d29922"/>
+          </div>
+          <div style={{marginTop:8,padding:"6px 8px",background:"#d299220c",border:"1px solid #d2992222",borderRadius:3,fontSize:9,color:"#8b949e"}}>
+            <div>S Radiator: <span style={{color:"#d29922"}}>{tmNum("S0000013","48.2",1)}°F</span> · P Radiator: <span style={{color:"#d29922"}}>{tmNum("P0000007","46.8",1)}°F</span></div>
+            <div>SARJ S4/P4/S6/P6: <span style={{color:"#d29922"}}>AUTO TRACK</span></div>
+          </div>
+        </ConsoleCard>
+
+      </div>
+
+      {/* ═══ MID ROW: ADCO + VVO + INCO ═══ */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1.2fr 1fr",gap:10,marginBottom:12}}>
+
+        {/* ─── ADCO — Attitude ─── */}
+        <ConsoleCard console={CONSOLES.ADCO}>
+          <div style={{fontSize:10,color:"#8b949e",marginBottom:8}}>ISS attitude control · Control Moment Gyros</div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,marginBottom:8}}>
+            {[1,2,3,4].map(function(i){
+              const sym = i===1?"USLAB000032":i===2?"USLAB000038":i===3?"USLAB000044":"USLAB000050";
+              const val = tmNum(sym,(6580+i*10).toString(),0);
+              const rpm = parseFloat(val);
+              const pct = Math.min(100,Math.max(0,(rpm-5500)/(7000-5500)*100));
+              return (
+                <div key={i} style={{padding:"5px 7px",background:"#a371f70c",border:"1px solid #a371f722",borderRadius:3}}>
+                  <div style={{display:"flex",justifyContent:"space-between",fontSize:10}}>
+                    <span style={{color:"#8b949e"}}>CMG {i}</span>
+                    <span style={{color:"#3fb950",fontSize:8}}>●</span>
+                  </div>
+                  <div style={{color:"#a371f7",fontWeight:600,fontSize:12,fontVariantNumeric:"tabular-nums"}}>{val} rpm</div>
+                  <div className="progress-track"><div className="progress-fill" style={{width:pct+"%",background:"#a371f7"}}/></div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:5,fontSize:10,marginBottom:6}}>
+            <KV l="YAW" v={tmNum("USLAB000018","-0.12",2)+"°"} c="#a371f7"/>
+            <KV l="PITCH" v={tmNum("USLAB000019","1.85",2)+"°"} c="#a371f7"/>
+            <KV l="ROLL" v={tmNum("USLAB000020","-0.34",2)+"°"} c="#a371f7"/>
+          </div>
+          <div style={{padding:"6px 8px",background:"#a371f70c",border:"1px solid #a371f722",borderRadius:3,fontSize:9,color:"#8b949e"}}>
+            <div>Station Mode: <span style={{color:"#a371f7"}}>{tm("USLAB000060","STANDARD")}</span></div>
+            <div>CMG Control: <span style={{color:"#3fb950"}}>{tm("USLAB000061","NOMINAL")}</span></div>
+            <div>Total Mass: <span style={{color:"#a371f7"}}>{tmNum("USLAB000059","419725",0)} kg</span></div>
+          </div>
+        </ConsoleCard>
+
+        {/* ─── VVO — Visiting Vehicles ─── */}
+        <ConsoleCard console={CONSOLES.VVO}>
+          <div style={{fontSize:10,color:"#8b949e",marginBottom:8}}>{VISITING_VEHICLES.filter(function(v){return v.status==="DOCKED";}).length}/{VISITING_VEHICLES.length} ports occupied · next arrival: Cygnus XL (Apr 8)</div>
+          <div style={{display:"flex",flexDirection:"column",gap:4}}>
+            {VISITING_VEHICLES.map(function(v,i){return (
+              <div key={i} style={{padding:"5px 8px",background:"#161b22",border:"1px solid #21262d",borderLeft:"2px solid "+v.color,borderRadius:3,fontSize:10}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                  <span style={{color:"#e6edf3",fontWeight:500}}>{v.vehicle || "— available —"}</span>
+                  <span style={{color:v.color,fontSize:8,padding:"1px 5px",border:"1px solid "+v.color+"44",borderRadius:2,fontWeight:700}}>{v.status}</span>
+                </div>
+                <div style={{color:"#8b949e",fontSize:9,marginTop:2}}>{v.port} · {v.mission || "—"}</div>
+                {v.vehicle && <div style={{color:"#6e7681",fontSize:9}}>arr {v.arrived} · dep {v.departure}</div>}
+              </div>
+            );})}
+          </div>
+        </ConsoleCard>
+
+        {/* ─── INCO — Comms ─── */}
+        <ConsoleCard console={CONSOLES.INCO}>
+          <div style={{fontSize:10,color:"#8b949e",marginBottom:8}}>TDRS relay constellation · ground coverage ~80%</div>
+
+          <div style={{display:"flex",flexDirection:"column",gap:5,fontSize:10}}>
+            <SignalBar label="S-Band String 1" status="ACQ" pct={92} color="#58a6ff"/>
+            <SignalBar label="S-Band String 2" status="ACQ" pct={88} color="#58a6ff"/>
+            <SignalBar label="Ku-Band Tx" status={tm("AIRLOCK000049","OPERATE")} pct={76} color="#58a6ff"/>
+            <SignalBar label="Ka-Band" status="ACQ" pct={68} color="#58a6ff"/>
+            <SignalBar label="UHF (EVA)" status="STBY" pct={100} color="#8b949e"/>
+          </div>
+
+          <div style={{marginTop:8,padding:"6px 8px",background:"#58a6ff0c",border:"1px solid #58a6ff22",borderRadius:3,fontSize:9,color:"#8b949e"}}>
+            <div>TDRS East: <span style={{color:"#3fb950"}}>TRACKING</span></div>
+            <div>TDRS West: <span style={{color:"#3fb950"}}>TRACKING</span></div>
+            <div>Signal: <span style={{color:"#3fb950"}}>AOS</span> · Ground Station: <span style={{color:"#58a6ff"}}>White Sands</span></div>
+          </div>
+        </ConsoleCard>
+
+      </div>
+
+      {/* ═══ BOTTOM ROW: CAPCOM (crew) + ROBO ═══ */}
+      <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:10,marginBottom:12}}>
+
+        {/* ─── CAPCOM — Crew ─── */}
+        <ConsoleCard console={CONSOLES.CAPCOM}>
+          <div style={{fontSize:10,color:"#8b949e",marginBottom:8}}>Expedition 74 · 7 crew onboard · voice loop: SG1 active</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:6}}>
+            {CREW.map(function(c,i){return (
+              <div key={i} style={{padding:"7px 9px",background:"#161b22",border:"1px solid #21262d",borderRadius:3}}>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",gap:6}}>
+                  <div style={{minWidth:0,flex:1}}>
+                    <div style={{fontSize:11,fontWeight:600,color:"#e6edf3",whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
+                      <span style={{fontSize:8,marginRight:5,padding:"1px 4px",border:"1px solid #f8514944",background:"#0d1117",color:"#f85149",borderRadius:2,fontWeight:700}}>{c.flag}</span>
+                      {c.name}
+                    </div>
+                    <div style={{fontSize:9,color:"#8b949e",marginTop:2}}>{c.role}</div>
+                    <div style={{fontSize:9,color:"#6e7681",marginTop:1}}>{c.agency} · {c.vehicle}</div>
+                  </div>
+                  <div style={{textAlign:"right"}}>
+                    <div style={{fontSize:14,fontWeight:600,color:"#f85149",lineHeight:1,fontVariantNumeric:"tabular-nums"}}>{c.days}</div>
+                    <div style={{fontSize:7,color:"#6e7681",marginTop:2}}>DAYS</div>
+                  </div>
+                </div>
+              </div>
+            );})}
+          </div>
+        </ConsoleCard>
+
+        {/* ─── ROBO — Robotics ─── */}
+        <ConsoleCard console={CONSOLES.ROBO}>
+          <div style={{fontSize:10,color:"#8b949e",marginBottom:8}}>Canadarm2 · SPDM Dextre · JEMRMS</div>
+          <div style={{display:"flex",flexDirection:"column",gap:5,fontSize:10}}>
+            <div style={{padding:"6px 8px",background:"#161b22",border:"1px solid #21262d",borderRadius:3}}>
+              <div style={{color:"#79c0ff",fontWeight:600}}>SSRMS Canadarm2</div>
+              <div style={{color:"#8b949e",fontSize:9,marginTop:2}}>Base: {tm("CSASSRMS001","MBS PDGF 1")}</div>
+              <div style={{color:"#8b949e",fontSize:9}}>Payload: {tm("CSASSRMS002","NONE")}</div>
+            </div>
+            <div style={{padding:"6px 8px",background:"#161b22",border:"1px solid #21262d",borderRadius:3}}>
+              <div style={{color:"#79c0ff",fontWeight:600}}>SPDM Dextre</div>
+              <div style={{color:"#8b949e",fontSize:9,marginTop:2}}>Arm 1: {tm("CSAMT000001","NONE")}</div>
+              <div style={{color:"#8b949e",fontSize:9}}>Arm 2: {tm("CSAMT000002","NONE")}</div>
+            </div>
+            <div style={{padding:"6px 8px",background:"#161b22",border:"1px solid #21262d",borderRadius:3}}>
+              <div style={{color:"#79c0ff",fontWeight:600}}>Mobile Base</div>
+              <div style={{color:"#8b949e",fontSize:9,marginTop:2}}>Position: {tm("CSAMBS000001","WS 4")}</div>
+            </div>
+          </div>
+        </ConsoleCard>
+
+      </div>
+
+      {/* ═══ LIVE CAM + DOCKED CREW VEHICLE ═══ */}
+      <div style={{display:"grid",gridTemplateColumns:"1.5fr 1fr",gap:10,marginBottom:12}}>
+        <div className="console-card">
+          <div className="console-header">
+            <div>
+              <span className="console-tag" style={{color:"#f85149",background:"#f8514915",border:"1px solid #f8514933",marginRight:6}}>LIVE CAM</span>
+              <span style={{color:"#e6edf3",fontWeight:600,fontSize:12}}>ISS HDEV — Earth View</span>
+            </div>
+            <span style={{fontSize:9,color:"#8b949e"}}>NASA / sen.com</span>
+          </div>
+          <div style={{position:"relative",paddingBottom:"56.25%",background:"#000",borderRadius:3,overflow:"hidden"}}>
+            <iframe
+              src="https://www.youtube.com/embed/H999s0P1Er0?autoplay=1&mute=1"
+              style={{position:"absolute",top:0,left:0,width:"100%",height:"100%",border:0}}
+              allow="accelerometer; autoplay; encrypted-media; gyroscope; picture-in-picture"
+              allowFullScreen
+              title="ISS Live Stream"
+            />
+          </div>
+          <div style={{marginTop:6,fontSize:9,color:"#6e7681"}}>
+            Note: when ISS is on the night side of Earth or during crew handovers, the stream may show a blue screen or standby card.
+          </div>
+        </div>
+
+        <div className="console-card">
+          <div className="console-header">
+            <div>
+              <span className="console-tag" style={{color:"#d29922",background:"#d2992215",border:"1px solid #d2992233",marginRight:6}}>SYSTEM</span>
+              <span style={{color:"#e6edf3",fontWeight:600,fontSize:12}}>Telemetry Data Source</span>
+            </div>
+          </div>
+          <div style={{fontSize:11,lineHeight:1.6,color:"#8b949e"}}>
+            <p style={{marginBottom:8}}>
+              Real ISS telemetry streamed from NASA's public feed via <a href="https://lightstreamer.com/customer-story/how-nasa-is-using-lightstreamer/" target="_blank" rel="noopener">Lightstreamer</a>, which bridges data from Mission Control at Johnson Space Center.
+            </p>
+            <div style={{marginTop:10,padding:"8px 10px",background:"#161b22",border:"1px solid #21262d",borderRadius:3,fontSize:10}}>
+              <div style={{marginBottom:4}}>Broker: <span style={{color:"#58a6ff"}}>push.lightstreamer.com</span></div>
+              <div style={{marginBottom:4}}>Adapter: <span style={{color:"#58a6ff"}}>ISSLIVE</span></div>
+              <div style={{marginBottom:4}}>Symbols subscribed: <span style={{color:"#3fb950"}}>{Object.keys(TELEMETRY).length}</span></div>
+              <div style={{marginBottom:4}}>Active updates: <span style={{color:"#3fb950"}}>{Object.keys(telemetry).length}</span></div>
+              <div>Status: <span style={{color:lsStatus==="online"?"#3fb950":"#d29922"}}>{lsStatus.toUpperCase()}</span></div>
+            </div>
+            <div style={{marginTop:10,fontSize:9,color:"#6e7681"}}>
+              If the Lightstreamer stream is delayed or blocked by CORS/firewall, the dashboard falls back to nominal reference values. Position data comes from the <a href="https://wheretheiss.at/w/developer" target="_blank" rel="noopener">wheretheiss.at</a> API.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ FOOTER ═══ */}
+      <div style={{borderTop:"1px solid #21262d",paddingTop:20,marginTop:18,fontSize:11,color:"#8b949e",lineHeight:1.8}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",flexWrap:"wrap",gap:14,marginBottom:14}}>
+          <div>
+            <div style={{color:"#e6edf3",fontSize:13,fontWeight:600,marginBottom:4}}>Author: <a href="https://rmayormartins.github.io" target="_blank" rel="noopener" style={{color:"#58a6ff"}}>Ramon Mayor Martins, Ph.D.</a></div>
+            <div style={{marginBottom:4}}><a href="https://www.ifsc.edu.br" target="_blank" rel="noopener" style={{color:"#8b949e"}}>Federal Institute of Santa Catarina (IFSC)</a> · Brazil</div>
+          </div>
+          <div style={{textAlign:"right",color:"#6e7681"}}>
+            <div>{new Date(time).toISOString().slice(0,10)} · {new Date(time).toISOString().slice(11,19)} UTC</div>
+            <div>continuous habitation: <span style={{color:"#3fb950"}}>{habDays.toLocaleString()}</span> days</div>
+          </div>
+        </div>
+        <div style={{borderTop:"1px solid #21262d",paddingTop:12,fontSize:10,color:"#6e7681"}}>
+          <div>Station Commander · v5.0 · Flight console layout based on NASA MCC-H Houston organization</div>
+          <div>Live telemetry: <a href="https://lightstreamer.com/customer-story/how-nasa-is-using-lightstreamer/" target="_blank" rel="noopener">Lightstreamer ISSLIVE feed</a> · Position: <a href="https://wheretheiss.at/w/developer" target="_blank" rel="noopener">wheretheiss.at</a></div>
+          <div>Symbol dictionary courtesy of <a href="https://github.com/ISS-Mimic/Mimic" target="_blank" rel="noopener">ISS Mimic project</a> (open-source, MIT license)</div>
+          <div>Live video: <a href="https://www.nasa.gov/nasatv" target="_blank" rel="noopener">NASA TV</a> / ISS HDEV · Crew data: NASA MCC-H · Updated April 2026</div>
+        </div>
+      </div>
+
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+//  SUB-COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════
+function ConsoleCard({console,children}){
+  return (
+    <div className="console-card" style={{borderLeft:"3px solid "+console.color}}>
+      <div className="console-header">
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{color:console.color,fontSize:14}}>{console.icon}</span>
+          <span className="console-tag" style={{color:console.color,background:console.color+"15",border:"1px solid "+console.color+"33"}}>{console.name}</span>
+          <span style={{color:"#8b949e",fontSize:11}}>{console.fullName}</span>
+        </div>
+      </div>
+      <div style={{fontSize:9,color:"#6e7681",marginBottom:8,lineHeight:1.4}}>{console.scope}</div>
+      {children}
+    </div>
+  );
+}
+
+function KV({l,v,c}){
+  return (
+    <div style={{padding:"4px 6px",background:"#161b22",border:"1px solid #21262d",borderRadius:3}}>
+      <div style={{fontSize:8,color:"#6e7681",letterSpacing:0.5,textTransform:"uppercase"}}>{l}</div>
+      <div style={{color:c||"#c9d1d9",fontSize:11,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{v}</div>
+    </div>
+  );
+}
+
+function MetricWithBar({label,value,unit,pct,color,sub}){
+  return (
+    <div style={{marginBottom:7}}>
+      <div style={{display:"flex",justifyContent:"space-between",fontSize:10,marginBottom:3}}>
+        <span style={{color:"#8b949e"}}>{label}</span>
+        <span style={{color:color,fontWeight:600,fontVariantNumeric:"tabular-nums"}}>{value} <span style={{color:"#6e7681",fontSize:9}}>{unit}</span></span>
+      </div>
+      <div className="progress-track">
+        <div className="progress-fill" style={{width:pct+"%",background:color}}/>
+      </div>
+      {sub && <div style={{fontSize:8,color:"#6e7681",marginTop:2}}>{sub}</div>}
+    </div>
+  );
+}
+
+function SignalBar({label,status,pct,color}){
+  return (
+    <div style={{padding:"5px 7px",background:"#161b22",border:"1px solid #21262d",borderRadius:3}}>
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:3}}>
+        <span style={{color:"#8b949e",fontSize:10}}>{label}</span>
+        <span style={{color:color,fontSize:9,fontWeight:700,padding:"1px 5px",border:"1px solid "+color+"44",borderRadius:2}}>{status}</span>
+      </div>
+      <div className="progress-track" style={{height:3}}>
+        <div className="progress-fill" style={{width:pct+"%",background:color}}/>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<StationCommander/>);
+</script>
+</body>
+</html>
