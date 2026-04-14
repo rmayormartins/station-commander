@@ -442,21 +442,44 @@ function StationCommander() {
   useEffect(function(){
     let client, sub;
     let retries = 0;
+
+    // Resolve LightstreamerClient/Subscription constructors from any of the possible namespaces.
+    // Lightstreamer Web Client SDK 9.2+ exposes these as DIRECT GLOBALS on window
+    // (window.LightstreamerClient, window.Subscription).
+    // Older 9.0/9.1 versions exposed them under the "Ls" namespace (Ls.LightstreamerClient).
+    // Some builds also use "lightstreamer" lowercase. We try all three so the code is robust.
+    function resolveLs(){
+      // Direct globals (current SDK 9.2+)
+      if(typeof window.LightstreamerClient === "function" && typeof window.Subscription === "function"){
+        return { LightstreamerClient: window.LightstreamerClient, Subscription: window.Subscription, source: "global" };
+      }
+      // Ls namespace (older 9.0/9.1)
+      if(window.Ls && typeof window.Ls.LightstreamerClient === "function"){
+        return { LightstreamerClient: window.Ls.LightstreamerClient, Subscription: window.Ls.Subscription, source: "Ls" };
+      }
+      // lightstreamer namespace (some builds)
+      if(window.lightstreamer && typeof window.lightstreamer.LightstreamerClient === "function"){
+        return { LightstreamerClient: window.lightstreamer.LightstreamerClient, Subscription: window.lightstreamer.Subscription, source: "lightstreamer" };
+      }
+      return null;
+    }
+
     function tryConnect(){
-      const Ls = window.Ls || window.lightstreamer;
-      if(!Ls || !Ls.LightstreamerClient){
+      const ns = resolveLs();
+      if(!ns){
         retries++;
-        if(retries < 30){
-          setTimeout(tryConnect, 300);
+        if(retries < 60){
+          setTimeout(tryConnect, 250);
         } else {
-          console.warn("[LS] library not loaded after 30 retries");
+          console.warn("[LS] library not loaded after 60 retries — check that the unpkg CDN is reachable");
           setLsStatus("library-missing");
         }
         return;
       }
       try {
+        console.log("[LS] Library loaded from namespace:", ns.source);
         console.log("[LS] Connecting to push.lightstreamer.com / ISSLIVE ...");
-        client = new Ls.LightstreamerClient("https://push.lightstreamer.com","ISSLIVE");
+        client = new ns.LightstreamerClient("https://push.lightstreamer.com","ISSLIVE");
         client.addListener({
           onStatusChange: function(status){
             console.log("[LS] status:", status);
@@ -472,11 +495,12 @@ function StationCommander() {
         });
         client.connect();
         const symbols = Object.keys(TELEMETRY);
-        sub = new Ls.Subscription("MERGE", symbols, ["TimeStamp","Value"]);
+        console.log("[LS] Subscribing to", symbols.length, "symbols");
+        sub = new ns.Subscription("MERGE", symbols, ["TimeStamp","Value"]);
         sub.setRequestedSnapshot("yes");
         sub.setRequestedMaxFrequency("1.0");
         sub.addListener({
-          onSubscription: function(){ console.log("[LS] subscribed OK"); },
+          onSubscription: function(){ console.log("[LS] ✓ subscribed OK"); },
           onSubscriptionError: function(code, msg){ console.error("[LS] sub error:", code, msg); },
           onItemUpdate: function(update){
             const itemName = update.getItemName();
